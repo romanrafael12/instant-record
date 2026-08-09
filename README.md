@@ -1,4 +1,3 @@
-
 <h1 align="center">Instant Record</h1>
 <p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b><br/>
 by <a href="https://instanrp.com">Instant Replay</a></p>
@@ -9,7 +8,7 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
 
 ## Install (Windows)
 
-1. Download the latest **`instant-record-windows-x64`** from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab → newest green run → **Artifacts**.
+1. Download the latest **`instant-record-windows-x64`** from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab → newest green run → **Artifacts**. (Or grab the **`InstantRecord-Setup.exe`** installer from the `instant-record-installer` artifact and skip the manual copy.)
 2. **Close OBS.**
 3. Unzip and copy the `bin` and `data` folders into:
    ```
@@ -20,12 +19,12 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
 
 ## Configure
 
-1. Add cameras: in the dock, click **＋ Add cameras** and pick your sources (or add the **Instant Record (Source)** filter manually).
+1. Add cameras: **drag a source** from OBS's Sources list onto the dock, or click **＋ Add cameras** and pick them (the filter is added automatically). Use the **✕** on a card to remove it.
 2. Open **Global config** in the dock and set it for all cameras at once:
    - **Output folder** — where clips are saved.
    - **Trigger** — *with OBS main recording*, *manual (hotkey)*, or *always*. Or turn on **Replay buffer mode** to save clips on demand.
    - **Encoder / bitrate / container** (see below).
-3. Run it from the dock: **Start all / Stop all / Save all clips**, or per-camera hotkeys (assign them in **OBS Settings → Hotkeys**, search "Instant").
+3. Run it from the dock: **Start all / Stop all / Save all clips**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant" — assign *Save all clips*, *Start all*, and *Stop all*.
 
 ## Encoders that work
 
