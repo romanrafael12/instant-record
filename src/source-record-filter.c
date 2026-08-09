@@ -269,7 +269,7 @@ static bool open_isolated_audio(struct source_record_filter *f, obs_source_t *pa
 {
 	const audio_t *global = obs_get_audio();
 	uint32_t rate = audio_output_get_sample_rate(global);
-	uint32_t channels = audio_output_get_channels(global);
+	uint32_t channels = (uint32_t)audio_output_get_channels(global);
 	const struct audio_output_info *goi = audio_output_get_info(global);
 
 	ring_init(&f->audio_ring, channels, rate);
