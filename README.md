@@ -26,6 +26,12 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
    - **Encoder / bitrate / container** (see below).
 3. Run it from the dock: **Start all / Stop all / Save all clips**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant" — assign *Save all clips*, *Start all*, and *Stop all*.
 
+Buffer per cam: 
+<img width="345" height="276" alt="image" src="https://github.com/user-attachments/assets/13895466-3261-464e-accd-d8e209055455" />
+Global Config:
+<img width="364" height="325" alt="image" src="https://github.com/user-attachments/assets/776bd587-a491-4130-83de-01d20daa0d7c" />
+
+
 ## Encoders that work
 
 - **NVIDIA NVENC H.264** — recommended. Hardware encoding, barely touches the CPU, edits cleanly everywhere.
