@@ -1,6 +1,7 @@
-<h1 align="center">Instant Record</h1>
-<p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b><br/>
-by <a href="https://instanrp.com">Instant Replay</a></p>
+# Instant Record
+
+**Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)**  
+by [Instant Replay](https://instanrp.com)
 
 ---
 
@@ -8,10 +9,15 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
 
 ## Screenshots
 
-<!-- Drag your screenshots right here while editing this file on GitHub — it uploads and links them automatically. -->
-<!-- Or commit images to a screenshots/ folder and use: <p align="center"><img src="screenshots/dock.png" width="600"/></p> -->
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/13895466-3261-464e-accd-d8e209055455" width="70%" alt="Instant Record dock — one card per camera with replay buffer"/>
+  <br/><em>The dock — one card per camera, with a per-camera replay buffer.</em>
+</p>
 
-_The dock and a source's filter — add your screenshots here._
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/776bd587-a491-4130-83de-01d20daa0d7c" width="70%" alt="Global config — apply to all cameras"/>
+  <br/><em>Global config — set encoder, container, resolution and buffer once, apply to every camera.</em>
+</p>
 
 ## Install (Windows)
 
@@ -26,12 +32,12 @@ _The dock and a source's filter — add your screenshots here._
 
 ## Configure
 
-1. Add cameras: **drag a source** from OBS's Sources list onto the dock, or click **＋ Add cameras** and pick them (the filter is added automatically). Use the **✕** on a card to remove it.
+1. **Add cameras — the fastest way:** drag and drop a source from OBS's Sources list onto the dock's box. **The filter is added automatically after you drop it** — no need to open Filters. (You can also use the **＋** button to pick sources, or add the **Instant Record (Source)** filter manually.) Use the **✕** on a card to remove it.
 2. Open **Global config** in the dock and set it for all cameras at once:
    - **Output folder** — where clips are saved.
    - **Trigger** — *with OBS main recording*, *manual (hotkey)*, or *always*. Or turn on **Replay buffer mode** to save clips on demand.
    - **Encoder / bitrate / container** (see below).
-3. Run it from the dock: **Start all / Stop all / Save all clips**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant" — assign *Save all clips*, *Start all*, and *Stop all*.
+3. Run it from the dock: **Start all / Stop all / Save buffer**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant" — assign *Save all clips*, *Start all*, and *Stop all*.
 
 ## Encoders that work
 
