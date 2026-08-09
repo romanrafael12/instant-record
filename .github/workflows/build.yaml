@@ -14,20 +14,23 @@ jobs:
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) { Write-Error "vswhere not found"; exit 1 }
-          $ver = & $vswhere -latest -property catalog_productLineVersion
-          if (-not $ver) {
-            $full = & $vswhere -latest -property installationVersion
-            $major = ($full -split '\.')[0]
-            $ver = @{ '17' = '2022'; '18' = '2026' }[$major]
-          }
-          $generator = "Visual Studio " + @{ '2022' = '17'; '2026' = '18' }[$ver] + " " + $ver
-          Write-Host "Detected Visual Studio generator: $generator"
+          $full = & $vswhere -latest -property installationVersion
+          $major = ($full -split '\.')[0]
+          $map = @{ '18' = 'Visual Studio 18 2026'; '17' = 'Visual Studio 17 2022'; '16' = 'Visual Studio 16 2019' }
+          $generator = $map[$major]
+          if (-not $generator) { Write-Error "Unknown Visual Studio version: $full"; exit 1 }
+          Write-Host "Detected generator: $generator (VS $full)"
           "generator=$generator" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Configure
-        run: cmake --preset windows-ci-x64 -G "${{ steps.vs.outputs.generator }}"
+        run: >
+          cmake -S . -B build_x64
+          -G "${{ steps.vs.outputs.generator }}"
+          -A x64
+          -DENABLE_QT=ON
+          -DENABLE_FRONTEND_API=ON
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
-        run: cmake --build --preset windows-ci-x64
+        run: cmake --build build_x64 --config RelWithDebInfo
       - name: Assemble plugin
         run: >
           cmake --install build_x64
