@@ -1,6 +1,6 @@
 /*
 Instant Record
-Copyright (C) 2026 Rafael Roman <rafael@instanrp.com>
+Copyright (C) 2026 Rafael Roman <support@instanrp.com>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -40,7 +40,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QCheckBox>
 #include <QFileDialog>
 
-/* Localized string helper — follows OBS's language, falls back to en-US. */
+/* Instant Replay brand palette. */
+#define IR_BG "#14181d"
+#define IR_PANEL "#1b222b"
+#define IR_RED "#e0403a"
+#define IR_BLUE "#2f8fe0"
+#define IR_TEXT "#e7eef5"
+#define IR_MUTED "#8aa0b4"
+
 static QString T(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
@@ -53,8 +60,6 @@ static QString format_elapsed(int64_t ns)
 	qint64 s = ns / 1000000000LL;
 	return QString::asprintf("%02lld:%02lld:%02lld", s / 3600, (s % 3600) / 60, s % 60);
 }
-
-/* ---- Persistence: remember the last global config across sessions ---- */
 
 static std::string sr_cfg_file()
 {
@@ -80,27 +85,55 @@ class InstantRecordDock : public QWidget {
 public:
 	explicit InstantRecordDock(QWidget *parent = nullptr) : QWidget(parent)
 	{
-		auto *root = new QVBoxLayout(this);
+		setStyleSheet(
+			"QWidget{background:" IR_BG ";color:" IR_TEXT ";font-size:12px;}"
+			"QLabel#title{font-size:15px;font-weight:700;color:" IR_TEXT ";}"
+			"QLabel#brand{color:" IR_RED ";font-weight:800;}"
+			"QTableWidget{background:" IR_PANEL ";gridline-color:#2a3542;border:none;}"
+			"QHeaderView::section{background:" IR_BG ";color:" IR_MUTED
+			";border:none;padding:4px;font-weight:600;}"
+			"QPushButton{background:" IR_PANEL ";color:" IR_TEXT
+			";border:1px solid #2a3542;border-radius:6px;padding:6px 10px;}"
+			"QPushButton:hover{border-color:" IR_BLUE ";}"
+			"QPushButton#start{background:" IR_RED ";border:none;font-weight:700;}"
+			"QPushButton#save{background:" IR_BLUE ";border:none;font-weight:700;}");
 
-		table = new QTableWidget(0, 3, this);
-		table->setHorizontalHeaderLabels({T("InstantRecord.Dock.Camera"), T("InstantRecord.Dock.Status"),
-						  T("InstantRecord.Dock.Time")});
+		auto *root = new QVBoxLayout(this);
+		root->setContentsMargins(10, 10, 10, 10);
+
+		auto *header = new QHBoxLayout();
+		auto *brand = new QLabel("● ", this);
+		brand->setObjectName("brand");
+		auto *title = new QLabel("Instant Replay — Instant Record", this);
+		title->setObjectName("title");
+		header->addWidget(brand);
+		header->addWidget(title);
+		header->addStretch();
+		root->addLayout(header);
+
+		table = new QTableWidget(0, 4, this);
+		table->setHorizontalHeaderLabels(
+			{T("InstantRecord.Dock.Camera"), T("InstantRecord.Dock.Status"),
+			 T("InstantRecord.Dock.Time"), QString()});
 		table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 		table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 		table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+		table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
 		table->verticalHeader()->setVisible(false);
 		table->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		table->setSelectionMode(QAbstractItemView::NoSelection);
 		root->addWidget(table);
 
 		summary = new QLabel(this);
-		summary->setStyleSheet("color:#8aa0b4;");
+		summary->setStyleSheet("color:" IR_MUTED ";padding:2px;");
 		root->addWidget(summary);
 
 		auto *btns = new QHBoxLayout();
 		auto *startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
+		startAll->setObjectName("start");
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
+		saveAll->setObjectName("save");
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
@@ -140,8 +173,13 @@ private:
 			QColor col;
 			switch (rows[i].status) {
 			case SR_STATUS_RECORDING:
-				st = T("InstantRecord.Dock.Rec");
-				col = QColor("#ff8f8a");
+				if (rows[i].use_buffer) {
+					st = QStringLiteral("● BUF");
+					col = QColor(IR_BLUE);
+				} else {
+					st = T("InstantRecord.Dock.Rec");
+					col = QColor(IR_RED);
+				}
 				rec++;
 				break;
 			case SR_STATUS_ERROR:
@@ -151,7 +189,7 @@ private:
 				break;
 			default:
 				st = T("InstantRecord.Dock.Idle");
-				col = QColor("#8b96a1");
+				col = QColor(IR_MUTED);
 				idle++;
 				break;
 			}
@@ -162,6 +200,19 @@ private:
 			table->setItem(i, 0, name);
 			table->setItem(i, 1, status);
 			table->setItem(i, 2, time);
+
+			/* Per-camera Save button, only for buffered + active cams. */
+			if (rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING) {
+				auto *btn = new QPushButton(T("InstantRecord.Dock.Save"));
+				btn->setObjectName("save");
+				int idx = i;
+				connect(btn, &QPushButton::clicked, this,
+					[idx] { sr_registry_save_index((size_t)idx); });
+				table->setCellWidget(i, 3, btn);
+			} else {
+				table->removeCellWidget(i, 3);
+				table->setItem(i, 3, new QTableWidgetItem(QString()));
+			}
 		}
 		table->resizeRowsToContents();
 		summary->setText(T("InstantRecord.Dock.Summary").arg(rec).arg(idle).arg(err));
@@ -170,6 +221,11 @@ private:
 	void openGlobalConfig()
 	{
 		QDialog dlg(this);
+		dlg.setStyleSheet("QDialog{background:" IR_BG ";color:" IR_TEXT ";}"
+				  "QLabel{color:" IR_TEXT ";}"
+				  "QPushButton{background:" IR_PANEL ";color:" IR_TEXT
+				  ";border:1px solid #2a3542;border-radius:6px;padding:6px 10px;}"
+				  "QPushButton#apply{background:" IR_BLUE ";border:none;font-weight:700;}");
 		dlg.setWindowTitle(T("InstantRecord.Global.Title"));
 		auto *grid = new QGridLayout(&dlg);
 		int r = 0;
@@ -233,11 +289,19 @@ private:
 		fps->addItem(T("InstantRecord.Global.Fps.Quarter"), 4);
 		grid->addWidget(fps, r++, 1);
 
+		auto *buffer = new QCheckBox(T("InstantRecord.Global.Buffer"), &dlg);
+		grid->addWidget(buffer, r++, 1);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.BufferSecs")), r, 0);
+		auto *bufSecs = new QSpinBox(&dlg);
+		bufSecs->setRange(5, 600);
+		bufSecs->setSingleStep(5);
+		bufSecs->setValue(30);
+		grid->addWidget(bufSecs, r++, 1);
+
 		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
-		isolate->setChecked(true);
 		grid->addWidget(isolate, r++, 1);
 
-		/* Restore the last-applied values, if any. */
+		/* Restore last-applied values. */
 		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
 		if (saved) {
 			pathEdit->setText(QString::fromUtf8(obs_data_get_string(saved, "path")));
@@ -248,11 +312,15 @@ private:
 			selectByData(mode, (int)obs_data_get_int(saved, "trigger"));
 			selectByData(scale, (int)obs_data_get_int(saved, "scale"));
 			selectByData(fps, (int)obs_data_get_int(saved, "fps"));
+			buffer->setChecked(obs_data_get_bool(saved, "use_buffer"));
+			if (obs_data_get_int(saved, "buffer_seconds") > 0)
+				bufSecs->setValue((int)obs_data_get_int(saved, "buffer_seconds"));
 			isolate->setChecked(obs_data_get_bool(saved, "isolate"));
 			obs_data_release(saved);
 		}
 
 		auto *apply = new QPushButton(T("InstantRecord.Global.ApplyAll"), &dlg);
+		apply->setObjectName("apply");
 		auto *cancel = new QPushButton(T("InstantRecord.Global.Cancel"), &dlg);
 		auto *bl = new QHBoxLayout();
 		bl->addStretch();
@@ -275,9 +343,10 @@ private:
 			cfg.isolate_audio = isolate->isChecked() ? 1 : 0;
 			cfg.scale_mode = scale->currentData().toInt();
 			cfg.fps_divisor = fps->currentData().toInt();
+			cfg.use_buffer = buffer->isChecked() ? 1 : 0;
+			cfg.buffer_seconds = bufSecs->value();
 			sr_registry_apply_config(&cfg);
 
-			/* Remember these values for next time. */
 			obs_data_t *d = obs_data_create();
 			obs_data_set_string(d, "path", path.constData());
 			obs_data_set_string(d, "container", fmtId.constData());
@@ -286,6 +355,8 @@ private:
 			obs_data_set_int(d, "trigger", mode->currentData().toInt());
 			obs_data_set_int(d, "scale", scale->currentData().toInt());
 			obs_data_set_int(d, "fps", fps->currentData().toInt());
+			obs_data_set_bool(d, "use_buffer", buffer->isChecked());
+			obs_data_set_int(d, "buffer_seconds", bufSecs->value());
 			obs_data_set_bool(d, "isolate", isolate->isChecked());
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
 			obs_data_release(d);

@@ -1,6 +1,6 @@
 /*
 Instant Record
-Copyright (C) 2026 Rafael Roman <support@instanrp.com>
+Copyright (C) 2026 Rafael Roman <rafael@instanrp.com>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -147,6 +147,18 @@ void sr_registry_save_all(void)
 	pthread_mutex_unlock(&sr_registry_lock);
 }
 
+void sr_registry_save_index(size_t index)
+{
+	pthread_mutex_lock(&sr_registry_lock);
+	if (index < sr_registry.num) {
+		struct source_record_filter *f = sr_registry.array[index];
+		pthread_mutex_lock(&f->mutex);
+		sr_save_locked(f);
+		pthread_mutex_unlock(&f->mutex);
+	}
+	pthread_mutex_unlock(&sr_registry_lock);
+}
+
 size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 {
 	size_t n = 0;
@@ -164,6 +176,7 @@ size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 		rows[n].elapsed_ns =
 			(f->active && f->status == SR_STATUS_RECORDING) ? (os_gettime_ns() - f->start_timestamp_ns) : 0;
 		rows[n].last_error_code = f->last_error_code;
+		rows[n].use_buffer = f->use_buffer;
 		pthread_mutex_unlock(&f->mutex);
 		n++;
 	}
@@ -196,6 +209,10 @@ void sr_registry_apply_config(const struct sr_global_config *cfg)
 			obs_data_set_int(s, "scale_mode", cfg->scale_mode);
 		if (cfg->fps_divisor > 0)
 			obs_data_set_int(s, "fps_divisor", cfg->fps_divisor);
+		if (cfg->use_buffer >= 0)
+			obs_data_set_bool(s, "use_buffer", cfg->use_buffer != 0);
+		if (cfg->buffer_seconds > 0)
+			obs_data_set_int(s, "buffer_seconds", cfg->buffer_seconds);
 		obs_source_update(f->source, s);
 		obs_data_release(s);
 	}
@@ -220,19 +237,27 @@ static void ring_init(struct sr_audio_ring *r, uint32_t channels, uint32_t rate)
 
 static void ring_free(struct sr_audio_ring *r)
 {
-	if (!r->ready)
+	pthread_mutex_lock(&r->lock);
+	if (!r->ready) {
+		pthread_mutex_unlock(&r->lock);
 		return;
+	}
+	r->ready = false; /* callbacks waiting on the lock will now bail */
 	for (uint32_t c = 0; c < r->channels; c++) {
 		bfree(r->data[c]);
 		r->data[c] = NULL;
 	}
+	pthread_mutex_unlock(&r->lock);
 	pthread_mutex_destroy(&r->lock);
-	r->ready = false;
 }
 
 static void ring_push(struct sr_audio_ring *r, const float **in, uint32_t frames)
 {
 	pthread_mutex_lock(&r->lock);
+	if (!r->ready || !r->data[0]) { /* torn down; don't touch freed memory */
+		pthread_mutex_unlock(&r->lock);
+		return;
+	}
 	for (uint32_t i = 0; i < frames; i++) {
 		for (uint32_t c = 0; c < r->channels; c++)
 			r->data[c][r->write_pos] = in[c] ? in[c][i] : 0.0f;
@@ -249,6 +274,13 @@ static void ring_push(struct sr_audio_ring *r, const float **in, uint32_t frames
 static void ring_pull(struct sr_audio_ring *r, float **out, uint32_t frames)
 {
 	pthread_mutex_lock(&r->lock);
+	if (!r->ready || !r->data[0]) { /* torn down; emit silence */
+		for (uint32_t c = 0; c < r->channels; c++)
+			for (uint32_t i = 0; i < frames; i++)
+				out[c][i] = 0.0f;
+		pthread_mutex_unlock(&r->lock);
+		return;
+	}
 	for (uint32_t i = 0; i < frames; i++) {
 		bool have = r->available > 0;
 		for (uint32_t c = 0; c < r->channels; c++)
@@ -294,8 +326,8 @@ static bool sr_audio_input(void *param, uint64_t start_ts, uint64_t end_ts, uint
 static bool open_isolated_audio(struct source_record_filter *f, obs_source_t *parent)
 {
 	const audio_t *global = obs_get_audio();
-	uint32_t rate = (uint32_t)audio_output_get_sample_rate(global);
-	uint32_t channels = (uint32_t)audio_output_get_channels(global);
+	uint32_t rate = audio_output_get_sample_rate(global);
+	uint32_t channels = audio_output_get_channels(global);
 	const struct audio_output_info *goi = audio_output_get_info(global);
 
 	ring_init(&f->audio_ring, channels, rate);

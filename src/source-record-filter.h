@@ -131,10 +131,14 @@ struct sr_status_row {
 	uint32_t height;
 	int64_t elapsed_ns; /* since start, if recording; else 0 */
 	int last_error_code;
+	bool use_buffer;    /* true if this camera is in replay-buffer mode */
 };
 
 /* Copies up to max_rows snapshots into `rows`; returns the count. */
 size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows);
+
+/* Save a clip from a single camera by its snapshot index. */
+void sr_registry_save_index(size_t index);
 
 /* Apply shared settings to every recorder at once. A NULL string or a
  * negative number means "leave that field unchanged" — so the dock can
@@ -148,6 +152,8 @@ struct sr_global_config {
 	int isolate_audio;   /* < 0 = unchanged, else 0/1 */
 	int scale_mode;      /* < 0 = unchanged  */
 	int fps_divisor;     /* <= 0 = unchanged */
+	int use_buffer;      /* < 0 = unchanged, else 0/1 */
+	int buffer_seconds;  /* <= 0 = unchanged */
 };
 void sr_registry_apply_config(const struct sr_global_config *cfg);
 
