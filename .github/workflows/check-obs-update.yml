@@ -1,0 +1,58 @@
+name: Check OBS releases
+
+# Runs weekly (and on demand) to see if OBS Studio shipped a new release.
+# If it did, it opens an issue in THIS repo with a test/rebuild checklist,
+# so you get a GitHub notification instead of having to watch OBS yourself.
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'   # Mondays, 12:00 UTC
+  workflow_dispatch:        # lets you run it manually from the Actions tab
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare latest OBS release and open an issue if new
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const obs = await github.rest.repos.getLatestRelease({
+              owner: 'obsproject', repo: 'obs-studio'
+            });
+            const tag = obs.data.tag_name;
+            const title = `OBS ${tag} released — verify Instant Record`;
+
+            const existing = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} in:title type:issue "${title}"`
+            });
+            if (existing.data.total_count > 0) {
+              core.info(`Issue already exists for ${tag}; nothing to do.`);
+              return;
+            }
+
+            const body = [
+              `A new OBS Studio release is out: **${tag}**`,
+              ``,
+              obs.data.html_url,
+              ``,
+              `### Checklist`,
+              `- [ ] Install ${tag} on a **test** machine (never right before an event)`,
+              `- [ ] Confirm the **Instant Record** dock loads and the filter appears`,
+              `- [ ] Do a short ISO + replay-buffer recording test`,
+              `- [ ] If anything breaks, rebuild against ${tag} and reinstall`,
+              ``,
+              `_Opened automatically by the weekly OBS release check._`
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body
+            });
+            core.info(`Opened issue for ${tag}.`);
