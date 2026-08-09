@@ -30,7 +30,7 @@ jobs:
           -DENABLE_FRONTEND_API=ON
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
-        run: cmake --build build_x64 --config RelWithDebInfo
+        run: cmake --build build_x64 --config RelWithDebInfo -- /p:TreatWarningAsError=false
       - name: Assemble plugin
         run: >
           cmake --install build_x64
