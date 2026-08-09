@@ -9,8 +9,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Detect Visual Studio generator
+        id: vs
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { Write-Error "vswhere not found"; exit 1 }
+          $ver = & $vswhere -latest -property catalog_productLineVersion
+          if (-not $ver) {
+            $full = & $vswhere -latest -property installationVersion
+            $major = ($full -split '\.')[0]
+            $ver = @{ '17' = '2022'; '18' = '2026' }[$major]
+          }
+          $generator = "Visual Studio " + @{ '2022' = '17'; '2026' = '18' }[$ver] + " " + $ver
+          Write-Host "Detected Visual Studio generator: $generator"
+          "generator=$generator" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Configure
-        run: cmake --preset windows-ci-x64
+        run: cmake --preset windows-ci-x64 -G "${{ steps.vs.outputs.generator }}"
       - name: Build
         run: cmake --build --preset windows-ci-x64
       - name: Assemble plugin
