@@ -40,6 +40,7 @@ jobs:
             -DENABLE_QT=ON `
             -DENABLE_FRONTEND_API=ON `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -DCMAKE_VS_PLATFORM_NAME=x64 `
             "-DCMAKE_SYSTEM_VERSION=${{ steps.sdk.outputs.version }}" `
             "-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION=${{ steps.sdk.outputs.version }}"
       - name: Build
