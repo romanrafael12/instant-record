@@ -32,6 +32,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QLabel>
+#include <QPixmap>
 #include <QTimer>
 #include <QDialog>
 #include <QLineEdit>
@@ -41,12 +42,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFileDialog>
 
 /* Instant Replay brand palette. */
-#define IR_BG "#14181d"
-#define IR_PANEL "#1b222b"
+#define IR_BG "#000000"
+#define IR_PANEL "#0c0c0d"
 #define IR_RED "#e0403a"
+#define IR_GOLD "#f5c04a"
 #define IR_BLUE "#2f8fe0"
-#define IR_TEXT "#e7eef5"
-#define IR_MUTED "#8aa0b4"
+#define IR_TEXT "#f4f6f8"
+#define IR_MUTED "#7c848c"
 
 static QString T(const char *key)
 {
@@ -87,27 +89,46 @@ public:
 	{
 		setStyleSheet(
 			"QWidget{background:" IR_BG ";color:" IR_TEXT ";font-size:12px;}"
-			"QLabel#title{font-size:15px;font-weight:700;color:" IR_TEXT ";}"
-			"QLabel#brand{color:" IR_RED ";font-weight:800;}"
-			"QTableWidget{background:" IR_PANEL ";gridline-color:#2a3542;border:none;}"
+			"QLabel#title{font-size:15px;font-weight:800;color:" IR_TEXT ";}"
+			"QLabel#subtitle{font-size:10px;font-weight:600;color:" IR_GOLD ";}"
+			"QTableWidget{background:" IR_PANEL ";gridline-color:#1c1c1f;border:none;}"
 			"QHeaderView::section{background:" IR_BG ";color:" IR_MUTED
-			";border:none;padding:4px;font-weight:600;}"
-			"QPushButton{background:" IR_PANEL ";color:" IR_TEXT
-			";border:1px solid #2a3542;border-radius:6px;padding:6px 10px;}"
-			"QPushButton:hover{border-color:" IR_BLUE ";}"
-			"QPushButton#start{background:" IR_RED ";border:none;font-weight:700;}"
-			"QPushButton#save{background:" IR_BLUE ";border:none;font-weight:700;}");
+			";border:none;padding:4px 8px;font-weight:700;}"
+			"QPushButton{background:#161618;color:" IR_TEXT
+			";border:1px solid #2a2a2e;border-radius:16px;padding:8px 14px;font-weight:600;}"
+			"QPushButton:hover{border-color:" IR_GOLD ";}"
+			"QPushButton#start{background:" IR_RED ";border:none;font-weight:800;}"
+			"QPushButton#save{background:" IR_GOLD ";color:#1a1408;border:none;font-weight:800;}"
+			"QPushButton#clip{background:" IR_BLUE ";border:none;border-radius:12px;padding:3px 12px;}"
+			"QPushButton#clipbuf{background:" IR_GOLD ";color:#1a1408;border:none;border-radius:12px;padding:3px 12px;font-weight:800;}");
 
 		auto *root = new QVBoxLayout(this);
 		root->setContentsMargins(10, 10, 10, 10);
 
+		/* ---- Header: real logo + name / by Instant Replay ---- */
 		auto *header = new QHBoxLayout();
-		auto *brand = new QLabel("● ", this);
-		brand->setObjectName("brand");
-		auto *title = new QLabel("Instant Replay — Instant Record", this);
+		auto *logo = new QLabel(this);
+		char *logoPath = obs_module_file("logo.png");
+		QPixmap pix;
+		if (logoPath) {
+			pix.load(QString::fromUtf8(logoPath));
+			bfree(logoPath);
+		}
+		if (!pix.isNull())
+			logo->setPixmap(pix.scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+		else
+			logo->setText("●");
+		header->addWidget(logo);
+
+		auto *titleBox = new QVBoxLayout();
+		titleBox->setSpacing(0);
+		auto *title = new QLabel("Instant Record", this);
 		title->setObjectName("title");
-		header->addWidget(brand);
-		header->addWidget(title);
+		auto *subtitle = new QLabel("by Instant Replay", this);
+		subtitle->setObjectName("subtitle");
+		titleBox->addWidget(title);
+		titleBox->addWidget(subtitle);
+		header->addLayout(titleBox);
 		header->addStretch();
 		root->addLayout(header);
 
@@ -115,13 +136,17 @@ public:
 		table->setHorizontalHeaderLabels(
 			{T("InstantRecord.Dock.Camera"), T("InstantRecord.Dock.Status"),
 			 T("InstantRecord.Dock.Time"), QString()});
-		table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-		table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-		table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-		table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+		auto *hh = table->horizontalHeader();
+		/* Pack columns left (no huge gap): camera/status/time snug, the
+		 * empty action column absorbs the remaining width. */
+		hh->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+		hh->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+		hh->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+		hh->setSectionResizeMode(3, QHeaderView::Stretch);
 		table->verticalHeader()->setVisible(false);
 		table->setEditTriggers(QAbstractItemView::NoEditTriggers);
 		table->setSelectionMode(QAbstractItemView::NoSelection);
+		table->setShowGrid(false);
 		root->addWidget(table);
 
 		summary = new QLabel(this);
@@ -141,6 +166,10 @@ public:
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
+
+		auto *hint = new QLabel(T("InstantRecord.Dock.HotkeyHint"), this);
+		hint->setStyleSheet("color:#5a5f65;font-size:10px;padding:2px;");
+		root->addWidget(hint);
 
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
@@ -171,11 +200,13 @@ private:
 
 			QString st;
 			QColor col;
+			bool buffering = false;
 			switch (rows[i].status) {
 			case SR_STATUS_RECORDING:
 				if (rows[i].use_buffer) {
 					st = QStringLiteral("● BUF");
-					col = QColor(IR_BLUE);
+					col = QColor(IR_GOLD);
+					buffering = true;
 				} else {
 					st = T("InstantRecord.Dock.Rec");
 					col = QColor(IR_RED);
@@ -184,7 +215,7 @@ private:
 				break;
 			case SR_STATUS_ERROR:
 				st = T("InstantRecord.Dock.Error");
-				col = QColor("#f0b263");
+				col = QColor("#f0a050");
 				err++;
 				break;
 			default:
@@ -201,10 +232,9 @@ private:
 			table->setItem(i, 1, status);
 			table->setItem(i, 2, time);
 
-			/* Per-camera Save button, only for buffered + active cams. */
 			if (rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING) {
 				auto *btn = new QPushButton(T("InstantRecord.Dock.Save"));
-				btn->setObjectName("save");
+				btn->setObjectName(buffering ? "clipbuf" : "clip");
 				int idx = i;
 				connect(btn, &QPushButton::clicked, this,
 					[idx] { sr_registry_save_index((size_t)idx); });
@@ -223,9 +253,9 @@ private:
 		QDialog dlg(this);
 		dlg.setStyleSheet("QDialog{background:" IR_BG ";color:" IR_TEXT ";}"
 				  "QLabel{color:" IR_TEXT ";}"
-				  "QPushButton{background:" IR_PANEL ";color:" IR_TEXT
-				  ";border:1px solid #2a3542;border-radius:6px;padding:6px 10px;}"
-				  "QPushButton#apply{background:" IR_BLUE ";border:none;font-weight:700;}");
+				  "QPushButton{background:#161618;color:" IR_TEXT
+				  ";border:1px solid #2a2a2e;border-radius:16px;padding:7px 14px;}"
+				  "QPushButton#apply{background:" IR_GOLD ";color:#1a1408;border:none;font-weight:800;}");
 		dlg.setWindowTitle(T("InstantRecord.Global.Title"));
 		auto *grid = new QGridLayout(&dlg);
 		int r = 0;
@@ -301,7 +331,6 @@ private:
 		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
 		grid->addWidget(isolate, r++, 1);
 
-		/* Restore last-applied values. */
 		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
 		if (saved) {
 			pathEdit->setText(QString::fromUtf8(obs_data_get_string(saved, "path")));

@@ -237,11 +237,13 @@ static void ring_init(struct sr_audio_ring *r, uint32_t channels, uint32_t rate)
 
 static void ring_free(struct sr_audio_ring *r)
 {
-	pthread_mutex_lock(&r->lock);
-	if (!r->ready) {
-		pthread_mutex_unlock(&r->lock);
+	/* If the ring was never opened (isolate-audio off) or is already
+	 * freed, its mutex is not valid — do NOT touch it. Checking this
+	 * BEFORE locking is what prevents the unlock-on-invalid-mutex crash
+	 * during teardown / OBS shutdown. */
+	if (!r->ready)
 		return;
-	}
+	pthread_mutex_lock(&r->lock);
 	r->ready = false; /* callbacks waiting on the lock will now bail */
 	for (uint32_t c = 0; c < r->channels; c++) {
 		bfree(r->data[c]);
