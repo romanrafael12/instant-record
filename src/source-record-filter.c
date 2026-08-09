@@ -1,6 +1,6 @@
 /*
 Instant Record
-Copyright (C) 2026 Rafael Roman <rafael@instanrp.com>
+Copyright (C) 2026 Rafael Roman <support@instanrp.com>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -294,8 +294,8 @@ static bool sr_audio_input(void *param, uint64_t start_ts, uint64_t end_ts, uint
 static bool open_isolated_audio(struct source_record_filter *f, obs_source_t *parent)
 {
 	const audio_t *global = obs_get_audio();
-	uint32_t rate = audio_output_get_sample_rate(global);
-	uint32_t channels = audio_output_get_channels(global);
+	uint32_t rate = (uint32_t)audio_output_get_sample_rate(global);
+	uint32_t channels = (uint32_t)audio_output_get_channels(global);
 	const struct audio_output_info *goi = audio_output_get_info(global);
 
 	ring_init(&f->audio_ring, channels, rate);
