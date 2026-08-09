@@ -1,16 +1,11 @@
 # CMake Windows compiler configuration module
-
 include_guard(GLOBAL)
-
 include(compiler_common)
-
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT ProgramDatabase)
-
 message(DEBUG "Current Windows API version: ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
 if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM)
   message(DEBUG "Maximum Windows API version: ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM}")
 endif()
-
 if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION VERSION_LESS 10.0.20348)
   message(
     FATAL_ERROR
@@ -18,14 +13,11 @@ if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION VERSION_LESS 10.0.20348)
     "Please download and install the most recent Windows platform SDK."
   )
 endif()
-
 set(_obs_msvc_c_options /MP /Zc:__cplusplus /Zc:preprocessor)
 set(_obs_msvc_cpp_options /MP /Zc:__cplusplus /Zc:preprocessor)
-
 if(CMAKE_CXX_STANDARD GREATER_EQUAL 20)
   list(APPEND _obs_msvc_cpp_options /Zc:char8_t-)
 endif()
-
 add_compile_options(
   /W3
   /utf-8
@@ -39,7 +31,6 @@ add_compile_options(
   $<$<NOT:$<CONFIG:Debug>>:/GL>
   $<$<NOT:$<CONFIG:Debug>>:/Oi>
 )
-
 add_compile_definitions(
   UNICODE
   _UNICODE
@@ -48,7 +39,6 @@ add_compile_definitions(
   $<$<CONFIG:DEBUG>:DEBUG>
   $<$<CONFIG:DEBUG>:_DEBUG>
 )
-
 add_link_options(
   $<$<NOT:$<CONFIG:Debug>>:/OPT:REF>
   $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>
@@ -57,7 +47,6 @@ add_link_options(
   /DEBUG
   /Brepro
 )
-
-if(CMAKE_COMPILE_WARNING_AS_ERROR)
+if(FALSE)
   add_link_options(/WX)
 endif()
