@@ -163,6 +163,7 @@ public:
 	{
 		setStyleSheet(
 			"QWidget{background:" IR_BG ";color:" IR_TEXT ";font-size:12px;}"
+			"QLabel{background:transparent;}"
 			"QLabel#title{font-size:15px;font-weight:800;}"
 			"QLabel#subtitle{font-size:10px;font-weight:600;color:" IR_GOLD ";}"
 			"QFrame#card{background:" IR_CARD ";border:1px solid #17171b;border-radius:12px;}"
@@ -172,8 +173,8 @@ public:
 			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0564f,stop:1 #c9322c);border:none;color:#fff;}"
 			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;}"
 			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:13px;padding:5px 14px;}"
-			"QPushButton#hk{background:#141416;border:1px solid #26262b;border-radius:9px;padding:3px 8px;font-size:11px;font-weight:600;color:#c9d0d6;}"
-			"QPushButton#hk:hover{border-color:" IR_GOLD ";}");
+			"QPushButton#hk{background:transparent;border:none;border-radius:10px;padding:4px 10px;font-size:11px;font-weight:700;color:#8b939b;}"
+			"QPushButton#hk:hover{background:#1c1c20;color:" IR_GOLD ";}");
 
 		auto *root = new QVBoxLayout(this);
 		root->setContentsMargins(10, 10, 10, 10);
