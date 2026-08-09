@@ -53,12 +53,14 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QVariant>
 #include <QGraphicsDropShadowEffect>
 
-/* Instant Replay brand palette. */
-#define IR_BG "#000000"
-#define IR_CARD "#0d0d0f"
-#define IR_RED "#e0403a"
-#define IR_GOLD "#f5c04a"
-#define IR_BLUE "#2f8fe0"
+/* Instant Replay brand palette (from the app UI). */
+#define IR_BG "#0b0b0d"
+#define IR_CARD "#141416"
+#define IR_RED "#ef4a44"
+#define IR_GOLD "#f7c04a"
+#define IR_BLUE "#3a8fe0"
+#define IR_PURPLE "#7b5cf0"
+#define IR_GREEN "#4ade80"
 #define IR_TEXT "#f4f6f8"
 #define IR_MUTED "#7c848c"
 
@@ -179,6 +181,7 @@ static void sr_remove_filter_from_source(const QString &name)
 struct Card {
 	QFrame *w;
 	QLabel *dot;
+	QLabel *info;
 	QLabel *status;
 	QLabel *time;
 	QPushButton *clip;
@@ -196,15 +199,16 @@ public:
 			"QLabel#title{font-size:14px;font-weight:800;}"
 			"QLabel#subtitle{font-size:10px;font-weight:600;color:" IR_GOLD ";}"
 			"QLabel#drop{border:2px dashed #24242a;border-radius:10px;color:#5a5f65;padding:12px;}"
-			"QFrame#card{background:" IR_CARD ";border:1px solid #17171b;border-radius:12px;}"
-			"QListWidget{background:" IR_CARD ";border:1px solid #17171b;border-radius:8px;}"
-			"QPushButton{background:#161618;color:" IR_TEXT
-			";border:1px solid #2a2a2e;border-radius:12px;padding:5px 11px;font-weight:700;font-size:12px;}"
+			"QFrame#card{background:" IR_CARD ";border:1px solid #242428;border-radius:12px;}"
+			"QListWidget{background:" IR_CARD ";border:1px solid #242428;border-radius:8px;}"
+			"QPushButton{background:#1a1a1e;color:" IR_TEXT
+			";border:1px solid #2e2e34;border-radius:12px;padding:5px 11px;font-weight:700;font-size:12px;}"
 			"QPushButton:hover{border-color:" IR_GOLD ";}"
-			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0564f,stop:1 #c9322c);border:none;color:#fff;}"
-			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;}"
-			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;font-weight:800;}"
-			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
+			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef4a44,stop:1 #cc302b);border:none;color:#fff;}"
+			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f7c04a,stop:1 #e9a41f);border:none;color:#3a2a08;}"
+			"QPushButton#add{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7b5cf0,stop:1 #5f3fd0);border:none;color:#fff;}"
+			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f7c04a,stop:1 #e9a41f);border:none;color:#3a2a08;font-weight:800;}"
+			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
 			"QPushButton#del{background:transparent;border:none;color:#5a5f65;font-weight:800;padding:2px 6px;}"
 			"QPushButton#del:hover{color:" IR_RED ";}"
 			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}");
@@ -262,6 +266,7 @@ public:
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
 		saveAll->setObjectName("save");
 		auto *addCams = new QPushButton(T("InstantRecord.Dock.AddCams"), this);
+		addCams->setObjectName("add");
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
@@ -365,7 +370,7 @@ private:
 			cl->addWidget(del);
 
 			cardsBox->addWidget(card);
-			cards.push_back({card, dot, stt, tm, clip, QString::fromUtf8(rows[i].name), i});
+			cards.push_back({card, dot, nm, stt, tm, clip, QString::fromUtf8(rows[i].name), i});
 		}
 	}
 
@@ -409,21 +414,35 @@ private:
 				break;
 			default:
 				st = T("InstantRecord.Dock.Idle");
-				colName = IR_MUTED;
+				colName = IR_GREEN; /* ready/online, on-brand */
 				idle++;
 				break;
 			}
-			/* Blink the dot while active so it reads as "live". */
-			QString dotCol = (active && !blinkOn) ? "#333333" : colName;
-			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(dotCol));
+			/* Live name + resolution + format: 0x0 becomes the real
+			 * resolution once recording, and Global config changes
+			 * (container/etc.) show immediately. */
+			c.info->setText(QString("%1\n%2x%3 \xC2\xB7 %4")
+						.arg(rows[i].name)
+						.arg(rows[i].width)
+						.arg(rows[i].height)
+						.arg(rows[i].format));
+			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(colName));
 			c.status->setText(st);
 			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
 			c.time->setText(format_elapsed(rows[i].elapsed_ns));
 			c.clip->setVisible(rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING);
+			/* Pulse the whole card border while active so recording is
+			 * unmistakable at a glance. */
+			QString border = active ? (blinkOn ? colName : "#2a2a30") : "#242428";
+			int bw = active ? 2 : 1;
+			c.w->setStyleSheet(QString("QFrame#card{background:" IR_CARD
+						   ";border:%1px solid %2;border-radius:12px;}")
+						   .arg(bw)
+						   .arg(border));
 		}
 		counters->setText(QString("<span style='color:" IR_RED "'>%1 REC</span>  "
 					  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
-					  "<span style='color:" IR_MUTED "'>%3 idle</span>")
+					  "<span style='color:" IR_GREEN "'>%3 ready</span>")
 					  .arg(rec)
 					  .arg(buf)
 					  .arg(idle));
