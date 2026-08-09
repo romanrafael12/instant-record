@@ -34,12 +34,14 @@ jobs:
           arch: x64
           sdk: ${{ steps.sdk.outputs.version }}
       - name: Configure (Qt + frontend ON)
-        run: >
-          cmake -S . -B build_x64 -G Ninja
-          -DENABLE_QT=ON
-          -DENABLE_FRONTEND_API=ON
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DCMAKE_SYSTEM_VERSION=${{ steps.sdk.outputs.version }}
+        shell: pwsh
+        run: |
+          cmake -S . -B build_x64 -G Ninja `
+            -DENABLE_QT=ON `
+            -DENABLE_FRONTEND_API=ON `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            "-DCMAKE_SYSTEM_VERSION=${{ steps.sdk.outputs.version }}" `
+            "-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION=${{ steps.sdk.outputs.version }}"
       - name: Build
         run: cmake --build build_x64
       - name: Assemble plugin
