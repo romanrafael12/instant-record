@@ -44,7 +44,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QListWidget>
 #include <QFileDialog>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QFocusEvent>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QDataStream>
+#include <QMap>
+#include <QVariant>
 #include <QGraphicsDropShadowEffect>
 
 /* Instant Replay brand palette. */
@@ -154,7 +162,7 @@ static void sr_add_filter_to_source(const QString &name)
  * key + modifiers. No Q_OBJECT needed — it uses a std::function. */
 class HotkeyButton : public QPushButton {
 public:
-	std::function<void(uint32_t, int)> onCapture;
+	std::function<void(uint32_t, int, QString)> onCapture;
 	bool capturing = false;
 	explicit HotkeyButton(QWidget *p = nullptr) : QPushButton(p) { setFocusPolicy(Qt::StrongFocus); }
 	void startCapture()
@@ -180,12 +188,13 @@ protected:
 		releaseKeyboard();
 		if (k == Qt::Key_Escape) {
 			if (onCapture)
-				onCapture(0, 0); /* clear */
+				onCapture(0, 0, QString()); /* clear */
 			return;
 		}
 		int obskey = (int)obs_key_from_virtual_key((int)e->nativeVirtualKey());
+		QString disp = QKeySequence((int)(e->modifiers() & ~Qt::KeypadModifier) | k).toString(QKeySequence::NativeText);
 		if (onCapture)
-			onCapture(qtToObsMods(e->modifiers()), obskey);
+			onCapture(qtToObsMods(e->modifiers()), obskey, disp);
 	}
 	void focusOutEvent(QFocusEvent *e) override
 	{
@@ -260,7 +269,14 @@ public:
 		cardsBox = new QVBoxLayout();
 		cardsBox->setSpacing(6);
 		root->addLayout(cardsBox);
+		placeholder = new QLabel(T("InstantRecord.Dock.DropHint"), this);
+		placeholder->setAlignment(Qt::AlignCenter);
+		placeholder->setWordWrap(true);
+		placeholder->setStyleSheet("color:#4a5560;font-size:12px;padding:22px;");
+		root->addWidget(placeholder);
 		root->addStretch();
+
+		setAcceptDrops(true); /* drag a source from OBS onto the dock */
 
 		/* Bottom action bar. */
 		auto *btns = new QHBoxLayout();
@@ -296,6 +312,7 @@ public:
 private:
 	QVBoxLayout *cardsBox;
 	QLabel *counters;
+	QLabel *placeholder;
 	std::vector<Card> cards;
 	QString lastSig;
 
@@ -317,11 +334,9 @@ private:
 		sr_registry_hotkey_str((size_t)camIndex, which, cur, sizeof(cur));
 		b->setText(g + " " + (cur[0] ? QString::fromUtf8(cur) : QStringLiteral("—")));
 		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
-		b->onCapture = [b, camIndex, which, g](uint32_t mods, int key) {
+		b->onCapture = [b, camIndex, which, g](uint32_t mods, int key, QString disp) {
 			sr_registry_bind_hotkey((size_t)camIndex, which, mods, key);
-			char cur2[128];
-			sr_registry_hotkey_str((size_t)camIndex, which, cur2, sizeof(cur2));
-			b->setText(g + " " + (cur2[0] ? QString::fromUtf8(cur2) : QStringLiteral("—")));
+			b->setText(g + " " + (disp.isEmpty() ? QStringLiteral("\xE2\x80\x94") : disp));
 		};
 		return b;
 	}
@@ -439,7 +454,65 @@ private:
 					  .arg(rec)
 					  .arg(buf)
 					  .arg(idle));
+		placeholder->setVisible(n == 0);
 	}
+
+	/* Try to add the Instant Record filter to a source by name. Returns
+	 * true only if it was a video source that didn't already have it. */
+	bool tryAddByName(const QString &name)
+	{
+		if (name.isEmpty())
+			return false;
+		obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
+		if (!src)
+			return false;
+		uint32_t flags = obs_source_get_output_flags(src);
+		enum obs_source_type t = obs_source_get_type(src);
+		bool ok = (flags & OBS_SOURCE_VIDEO) && t != OBS_SOURCE_TYPE_FILTER &&
+			  t != OBS_SOURCE_TYPE_TRANSITION && !sr_source_has_filter(src);
+		if (ok) {
+			obs_source_t *flt =
+				obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
+			if (flt) {
+				obs_source_filter_add(src, flt);
+				obs_source_release(flt);
+			}
+		}
+		obs_source_release(src);
+		return ok;
+	}
+
+protected:
+	void dragEnterEvent(QDragEnterEvent *e) override
+	{
+		if (e->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist") ||
+		    e->mimeData()->hasText())
+			e->acceptProposedAction();
+	}
+	void dragMoveEvent(QDragMoveEvent *e) override { e->acceptProposedAction(); }
+	void dropEvent(QDropEvent *e) override
+	{
+		const QMimeData *m = e->mimeData();
+		int added = 0;
+		if (m->hasFormat("application/x-qabstractitemmodeldatalist")) {
+			QByteArray enc = m->data("application/x-qabstractitemmodeldatalist");
+			QDataStream s(&enc, QIODevice::ReadOnly);
+			while (!s.atEnd()) {
+				int row = 0, col = 0;
+				QMap<int, QVariant> roles;
+				s >> row >> col >> roles;
+				QString name = roles.value(Qt::DisplayRole).toString();
+				if (tryAddByName(name))
+					added++;
+			}
+		}
+		if (added == 0 && m->hasText())
+			tryAddByName(m->text().trimmed());
+		e->acceptProposedAction();
+		refresh();
+	}
+
+private:
 
 	HotkeyButton *makeHkAll(const QString &label, int which)
 	{
@@ -447,9 +520,9 @@ private:
 		b->setObjectName("hk");
 		b->setText(label);
 		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
-		b->onCapture = [b, which, label](uint32_t mods, int key) {
+		b->onCapture = [b, which, label](uint32_t mods, int key, QString disp) {
 			sr_registry_bind_hotkey_all(which, mods, key);
-			b->setText(label + " \xE2\x9C\x93"); /* ✓ */
+			b->setText(label + " " + (disp.isEmpty() ? QStringLiteral("\xE2\x9C\x93") : disp));
 		};
 		return b;
 	}
