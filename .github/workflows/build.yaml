@@ -2,7 +2,6 @@ name: Build Windows
 on:
   push:
   workflow_dispatch:
-
 jobs:
   windows:
     name: Build for Windows x64
@@ -10,29 +9,26 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
       - name: Configure (Qt + frontend ON)
         run: >
-          cmake --preset windows-x64
+          cmake -S . -B build_x64
+          -G "Visual Studio 17 2022" -A x64
           -DENABLE_QT=ON
           -DENABLE_FRONTEND_API=ON
-
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
-        run: cmake --build --preset windows-x64
-
+        run: cmake --build build_x64 --config RelWithDebInfo
       - name: Assemble plugin
         run: >
           cmake --install build_x64
           --prefix "${{ github.workspace }}/release"
           --config RelWithDebInfo
-
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
           name: instant-record-windows-x64
           path: release/**
           if-no-files-found: warn
-
       - name: Upload raw build (debug)
         if: always()
         uses: actions/upload-artifact@v4
