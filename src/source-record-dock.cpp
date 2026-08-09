@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <string>
 #include <vector>
+#include <cstring>
 #include <functional>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -40,6 +41,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QComboBox>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QListWidget>
 #include <QFileDialog>
 #include <QKeyEvent>
 #include <QFocusEvent>
@@ -99,6 +101,53 @@ static uint32_t qtToObsMods(Qt::KeyboardModifiers m)
 	if (m & Qt::MetaModifier)
 		r |= INTERACT_COMMAND_KEY;
 	return r;
+}
+
+/* True if the source already carries an Instant Record filter. */
+static bool sr_source_has_filter(obs_source_t *src)
+{
+	bool found = false;
+	obs_source_enum_filters(
+		src,
+		[](obs_source_t *, obs_source_t *filter, void *d) {
+			const char *id = obs_source_get_id(filter);
+			if (id && strcmp(id, "instant_record_filter") == 0)
+				*(bool *)d = true;
+		},
+		&found);
+	return found;
+}
+
+/* Collect names of video sources that don't have the filter yet. */
+static bool sr_collect_sources(void *data, obs_source_t *src)
+{
+	auto *names = static_cast<std::vector<QString> *>(data);
+	uint32_t flags = obs_source_get_output_flags(src);
+	if (!(flags & OBS_SOURCE_VIDEO))
+		return true;
+	enum obs_source_type t = obs_source_get_type(src);
+	if (t == OBS_SOURCE_TYPE_FILTER || t == OBS_SOURCE_TYPE_TRANSITION)
+		return true;
+	if (sr_source_has_filter(src))
+		return true;
+	const char *nm = obs_source_get_name(src);
+	if (nm && *nm)
+		names->push_back(QString::fromUtf8(nm));
+	return true;
+}
+
+/* Create and attach an Instant Record filter to a source by name. */
+static void sr_add_filter_to_source(const QString &name)
+{
+	obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
+	if (!src)
+		return;
+	obs_source_t *flt = obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
+	if (flt) {
+		obs_source_filter_add(src, flt);
+		obs_source_release(flt);
+	}
+	obs_source_release(src);
 }
 
 /* A button that captures the next key press and reports it as an OBS
@@ -223,16 +272,19 @@ public:
 		saveAll->setObjectName("save");
 		shadow(saveAll);
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
+		auto *addCams = new QPushButton(T("InstantRecord.Dock.AddCams"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
 		btns->addStretch();
+		btns->addWidget(addCams);
 		btns->addWidget(config);
 		root->addLayout(btns);
 
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
 		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
+		connect(addCams, &QPushButton::clicked, this, [this] { pickAndAddCameras(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
 
 		auto *timer = new QTimer(this);
@@ -400,6 +452,61 @@ private:
 			b->setText(label + " \xE2\x9C\x93"); /* ✓ */
 		};
 		return b;
+	}
+
+	void pickAndAddCameras()
+	{
+		std::vector<QString> names;
+		obs_enum_sources(sr_collect_sources, &names);
+
+		QDialog dlg(this);
+		dlg.setStyleSheet("QDialog{background:" IR_BG ";color:" IR_TEXT ";}"
+				  "QLabel{color:" IR_TEXT ";}"
+				  "QListWidget{background:" IR_CARD ";border:1px solid #17171b;border-radius:8px;}"
+				  "QPushButton{background:#161618;color:" IR_TEXT
+				  ";border:1px solid #2a2a2e;border-radius:14px;padding:7px 14px;}"
+				  "QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);color:#3a2a08;border:none;font-weight:800;}");
+		dlg.setWindowTitle(T("InstantRecord.Add.Title"));
+		auto *v = new QVBoxLayout(&dlg);
+
+		QListWidget *list = nullptr;
+		if (names.empty()) {
+			v->addWidget(new QLabel(T("InstantRecord.Add.None")));
+		} else {
+			v->addWidget(new QLabel(T("InstantRecord.Add.Pick")));
+			list = new QListWidget(&dlg);
+			for (const QString &n : names) {
+				auto *it = new QListWidgetItem(n, list);
+				it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+				it->setCheckState(Qt::Checked);
+			}
+			v->addWidget(list);
+		}
+
+		auto *row = new QHBoxLayout();
+		row->addStretch();
+		auto *cancel = new QPushButton(T("InstantRecord.Global.Cancel"), &dlg);
+		auto *ok = new QPushButton(T("InstantRecord.Add.Confirm"), &dlg);
+		ok->setObjectName("apply");
+		ok->setEnabled(list != nullptr);
+		row->addWidget(cancel);
+		row->addWidget(ok);
+		v->addLayout(row);
+
+		connect(cancel, &QPushButton::clicked, &dlg, [&] { dlg.reject(); });
+		connect(ok, &QPushButton::clicked, &dlg, [&] {
+			if (list) {
+				for (int i = 0; i < list->count(); i++) {
+					QListWidgetItem *it = list->item(i);
+					if (it->checkState() == Qt::Checked)
+						sr_add_filter_to_source(it->text());
+				}
+			}
+			dlg.accept();
+		});
+
+		dlg.exec();
+		refresh();
 	}
 
 	void openGlobalConfig()
