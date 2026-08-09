@@ -42,6 +42,35 @@ jobs:
           name: instant-record-windows-x64
           path: release/**
           if-no-files-found: warn
+
+      # ---- Windows installer (.exe) via Inno Setup ----
+      - name: Stage installer files
+        shell: pwsh
+        run: |
+          $stage = "installer\stage"
+          New-Item -ItemType Directory -Force -Path "$stage\bin\64bit" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$stage\data" | Out-Null
+          $dll = Get-ChildItem -Recurse -Path build_x64 -Filter instant-record.dll |
+                 Where-Object { $_.FullName -match 'RelWithDebInfo|Release' } | Select-Object -First 1
+          if (-not $dll) { $dll = Get-ChildItem -Recurse -Path build_x64 -Filter instant-record.dll | Select-Object -First 1 }
+          Copy-Item $dll.FullName "$stage\bin\64bit\instant-record.dll" -Force
+          Copy-Item -Recurse -Force "data\*" "$stage\data\"
+          Write-Host "Staged DLL: $($dll.FullName)"
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $stage = (Resolve-Path "installer\stage").Path
+          & $iscc "/DMyStage=$stage" "/DMyVersion=1.0.$env:GITHUB_RUN_NUMBER" "installer\instant-record.iss"
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-installer
+          path: installer\Output\*.exe
+          if-no-files-found: warn
+
       - name: Upload raw build (debug)
         if: always()
         uses: actions/upload-artifact@v4
