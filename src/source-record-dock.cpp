@@ -243,14 +243,15 @@ public:
 		cardsBox->setSpacing(6);
 		root->addLayout(cardsBox);
 
-		/* Always-visible drop zone. */
-		dropZone = new QLabel(T("InstantRecord.Dock.DropHint"), this);
-		dropZone->setObjectName("drop");
-		dropZone->setAlignment(Qt::AlignCenter);
-		dropZone->setWordWrap(true);
-		root->addWidget(dropZone);
+		/* Empty-state hint (OBS doesn't allow dragging sources into a
+		 * plugin dock, so we point users at the Add cameras button). */
+		emptyHint = new QLabel(T("InstantRecord.Dock.EmptyHint"), this);
+		emptyHint->setObjectName("drop");
+		emptyHint->setAlignment(Qt::AlignCenter);
+		emptyHint->setWordWrap(true);
+		root->addWidget(emptyHint);
 		root->addStretch();
-		setAcceptDrops(true);
+		setAcceptDrops(true); /* drag a source from OBS onto the dock */
 
 		/* Bottom action bar. */
 		auto *btns = new QHBoxLayout();
@@ -284,7 +285,7 @@ public:
 private:
 	QVBoxLayout *cardsBox;
 	QLabel *counters;
-	QLabel *dropZone;
+	QLabel *emptyHint;
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
@@ -484,13 +485,13 @@ protected:
 	void dragEnterEvent(QDragEnterEvent *e) override
 	{
 		if (e->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist") || e->mimeData()->hasText()) {
-			dropZone->setStyleSheet("border:2px dashed " IR_GOLD ";border-radius:10px;color:" IR_GOLD
-						";padding:12px;");
+			emptyHint->setStyleSheet("border:2px dashed " IR_GOLD ";border-radius:10px;color:" IR_GOLD
+						 ";padding:12px;");
 			e->acceptProposedAction();
 		}
 	}
 	void dragMoveEvent(QDragMoveEvent *e) override { e->acceptProposedAction(); }
-	void dragLeaveEvent(QDragLeaveEvent *) override { dropZone->setStyleSheet(""); }
+	void dragLeaveEvent(QDragLeaveEvent *) override { emptyHint->setStyleSheet(""); }
 	void dropEvent(QDropEvent *e) override
 	{
 		const QMimeData *m = e->mimeData();
@@ -502,14 +503,19 @@ protected:
 				int rrow = 0, rcol = 0;
 				QMap<int, QVariant> roles;
 				s >> rrow >> rcol >> roles;
-				if (sr_add_filter_to_source(roles.value(Qt::DisplayRole).toString()))
+				/* OBS's source list exposes the source name via the
+				 * accessible-text role, not the display role. */
+				QString name = roles.value(Qt::AccessibleTextRole).toString();
+				if (name.isEmpty())
+					name = roles.value(Qt::DisplayRole).toString();
+				if (sr_add_filter_to_source(name))
 					added++;
 			}
 		}
 		if (added == 0 && m->hasText())
 			sr_add_filter_to_source(m->text().trimmed());
 		e->acceptProposedAction();
-		dropZone->setStyleSheet("");
+		emptyHint->setStyleSheet("");
 		refresh();
 	}
 
