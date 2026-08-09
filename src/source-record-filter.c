@@ -121,6 +121,32 @@ void sr_registry_start_all(void)
 	pthread_mutex_unlock(&sr_registry_lock);
 }
 
+/* Save a replay clip from this recorder's buffer (caller holds mutex). */
+static void sr_save_locked(struct source_record_filter *f)
+{
+	if (!f->use_buffer || !f->fileOutput || !f->active)
+		return;
+	proc_handler_t *ph = obs_output_get_proc_handler(f->fileOutput);
+	if (!ph)
+		return;
+	calldata_t cd = {0};
+	proc_handler_call(ph, "save", &cd);
+	calldata_free(&cd);
+	obs_log(LOG_INFO, "[instant-record] saved replay clip");
+}
+
+void sr_registry_save_all(void)
+{
+	pthread_mutex_lock(&sr_registry_lock);
+	for (size_t i = 0; i < sr_registry.num; i++) {
+		struct source_record_filter *f = sr_registry.array[i];
+		pthread_mutex_lock(&f->mutex);
+		sr_save_locked(f);
+		pthread_mutex_unlock(&f->mutex);
+	}
+	pthread_mutex_unlock(&sr_registry_lock);
+}
+
 size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 {
 	size_t n = 0;
@@ -269,7 +295,7 @@ static bool open_isolated_audio(struct source_record_filter *f, obs_source_t *pa
 {
 	const audio_t *global = obs_get_audio();
 	uint32_t rate = audio_output_get_sample_rate(global);
-	uint32_t channels = (uint32_t)audio_output_get_channels(global);
+	uint32_t channels = audio_output_get_channels(global);
 	const struct audio_output_info *goi = audio_output_get_info(global);
 
 	ring_init(&f->audio_ring, channels, rate);
@@ -488,8 +514,28 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 		obs_encoder_set_audio(f->audio_encoder, obs_get_audio()); /* rock-solid fallback */
 
 	obs_data_t *outset = obs_data_create();
-	obs_data_set_string(outset, "path", filepath);
-	f->fileOutput = obs_output_create("ffmpeg_muxer", "instant_record_output", outset, NULL);
+	if (f->use_buffer) {
+		/* Replay buffer: keeps the last N seconds in memory; a clip is
+		 * written on demand via the save hotkey / dock button. */
+		struct dstr fmt;
+		obs_source_t *par = obs_filter_get_parent(f->source);
+		struct dstr nm;
+		dstr_init_copy(&nm, par ? obs_source_get_name(par) : "source");
+		sanitize(&nm);
+		dstr_init(&fmt);
+		dstr_printf(&fmt, "%s_%%CCYY-%%MM-%%DD_%%hh-%%mm-%%ss", nm.array);
+		obs_data_set_string(outset, "directory", f->path && *f->path ? f->path : ".");
+		obs_data_set_string(outset, "format", fmt.array);
+		obs_data_set_string(outset, "extension", f->rec_format && *f->rec_format ? f->rec_format : "mkv");
+		obs_data_set_int(outset, "max_time_sec", f->buffer_seconds > 0 ? f->buffer_seconds : 30);
+		obs_data_set_int(outset, "max_size_mb", 0);
+		f->fileOutput = obs_output_create("replay_buffer", "instant_record_buffer", outset, NULL);
+		dstr_free(&fmt);
+		dstr_free(&nm);
+	} else {
+		obs_data_set_string(outset, "path", filepath);
+		f->fileOutput = obs_output_create("ffmpeg_muxer", "instant_record_output", outset, NULL);
+	}
 	obs_data_release(outset);
 
 	obs_output_set_video_encoder(f->fileOutput, f->video_encoder);
@@ -517,9 +563,11 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 	f->used_fps_div = (int)fps_div;
 	bfree(f->used_encoder);
 	f->used_encoder = bstrdup(enc_id && *enc_id ? enc_id : "obs_x264");
-	bfree(f->current_filepath);
-	f->current_filepath = bstrdup(filepath);
-	write_sidecar(f, false, 0); /* start entry — survives a crash */
+	if (!f->use_buffer) {
+		bfree(f->current_filepath);
+		f->current_filepath = bstrdup(filepath);
+		write_sidecar(f, false, 0); /* start entry — survives a crash */
+	}
 	obs_log(LOG_INFO, "[instant-record] recording %ux%u@1/%u via '%s' -> %s", sw, sh, fps_div, enc_id, filepath);
 	return true;
 }
@@ -657,6 +705,18 @@ static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hk, boo
 /* Source info callbacks                                              */
 /* ================================================================== */
 
+static void sr_save_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool pressed)
+{
+	UNUSED_PARAMETER(id);
+	UNUSED_PARAMETER(hk);
+	if (!pressed)
+		return;
+	struct source_record_filter *f = data;
+	pthread_mutex_lock(&f->mutex);
+	sr_save_locked(f);
+	pthread_mutex_unlock(&f->mutex);
+}
+
 static const char *sr_get_name(void *unused)
 {
 	UNUSED_PARAMETER(unused);
@@ -673,6 +733,8 @@ static void sr_update(void *data, obs_data_t *settings)
 	f->scale_mode = (int)obs_data_get_int(settings, "scale_mode");
 	f->fps_divisor = (int)obs_data_get_int(settings, "fps_divisor");
 	f->encoder_fallback = obs_data_get_bool(settings, "encoder_fallback");
+	f->use_buffer = obs_data_get_bool(settings, "use_buffer");
+	f->buffer_seconds = (int)obs_data_get_int(settings, "buffer_seconds");
 	bfree(f->fallback_encoder_id);
 	f->fallback_encoder_id = bstrdup(obs_data_get_string(settings, "fallback_encoder"));
 	bfree(f->path);
@@ -690,12 +752,16 @@ static void *sr_create(obs_data_t *settings, obs_source_t *source)
 	f->source = source;
 	f->status = SR_STATUS_IDLE;
 	f->record_hotkey_pair = OBS_INVALID_HOTKEY_PAIR_ID;
+	f->save_hotkey = OBS_INVALID_HOTKEY_ID;
 	pthread_mutex_init(&f->mutex, NULL);
 	sr_update(f, settings);
 
 	f->record_hotkey_pair = obs_hotkey_pair_register_source(
 		source, "InstantRecord.Start", obs_module_text("InstantRecord.Start"), "InstantRecord.Stop",
 		obs_module_text("InstantRecord.Stop"), hotkey_start, hotkey_stop, f, f);
+
+	f->save_hotkey = obs_hotkey_register_source(source, "InstantRecord.SaveReplay",
+						    obs_module_text("InstantRecord.SaveReplay"), sr_save_hotkey, f);
 
 #ifdef ENABLE_FRONTEND_API
 	obs_frontend_add_event_callback(frontend_event, f);
@@ -713,6 +779,8 @@ static void sr_destroy(void *data)
 #endif
 	if (f->record_hotkey_pair != OBS_INVALID_HOTKEY_PAIR_ID)
 		obs_hotkey_pair_unregister(f->record_hotkey_pair);
+	if (f->save_hotkey != OBS_INVALID_HOTKEY_ID)
+		obs_hotkey_unregister(f->save_hotkey);
 
 	pthread_mutex_lock(&f->mutex);
 	stop_file_output_locked(f);
@@ -810,6 +878,8 @@ static void sr_defaults(obs_data_t *s)
 	obs_data_set_default_int(s, "fps_divisor", 1);
 	obs_data_set_default_bool(s, "encoder_fallback", true);
 	obs_data_set_default_string(s, "fallback_encoder", "obs_x264");
+	obs_data_set_default_bool(s, "use_buffer", false);
+	obs_data_set_default_int(s, "buffer_seconds", 30);
 }
 
 static obs_properties_t *sr_properties(void *data)
@@ -844,6 +914,10 @@ static obs_properties_t *sr_properties(void *data)
 
 	obs_properties_add_int(p, "bitrate", obs_module_text("InstantRecord.Bitrate"), 500, 100000, 500);
 	obs_properties_add_bool(p, "isolate_audio", obs_module_text("InstantRecord.IsolateAudio"));
+
+	/* Replay buffer: keep last N seconds, save clips on demand. */
+	obs_properties_add_bool(p, "use_buffer", obs_module_text("InstantRecord.Buffer"));
+	obs_properties_add_int(p, "buffer_seconds", obs_module_text("InstantRecord.BufferSecs"), 5, 600, 5);
 
 	/* Cost controls — cut encoding load on backup cameras. */
 	obs_property_t *scale = obs_properties_add_list(p, "scale_mode", obs_module_text("InstantRecord.Scale"),

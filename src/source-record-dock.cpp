@@ -17,11 +17,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include <obs-module.h>
+#include <util/platform.h>
 #include "source-record-filter.h"
 
 #ifdef ENABLE_FRONTEND_API
 #include <obs-frontend-api.h>
 
+#include <string>
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -38,6 +40,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QCheckBox>
 #include <QFileDialog>
 
+/* Localized string helper — follows OBS's language, falls back to en-US. */
+static QString T(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
+
 static QString format_elapsed(int64_t ns)
 {
 	if (ns <= 0)
@@ -46,8 +54,28 @@ static QString format_elapsed(int64_t ns)
 	return QString::asprintf("%02lld:%02lld:%02lld", s / 3600, (s % 3600) / 60, s % 60);
 }
 
-/* No Q_OBJECT / no custom slots: we use lambda connects only, so this
- * class needs no moc pass. */
+/* ---- Persistence: remember the last global config across sessions ---- */
+
+static std::string sr_cfg_file()
+{
+	char *dir = obs_module_get_config_path(obs_current_module(), "");
+	if (dir) {
+		os_mkdirs(dir);
+		bfree(dir);
+	}
+	char *f = obs_module_get_config_path(obs_current_module(), "global.json");
+	std::string s = f ? f : "";
+	bfree(f);
+	return s;
+}
+
+static void selectByData(QComboBox *c, const QVariant &v)
+{
+	int i = c->findData(v);
+	if (i >= 0)
+		c->setCurrentIndex(i);
+}
+
 class InstantRecordDock : public QWidget {
 public:
 	explicit InstantRecordDock(QWidget *parent = nullptr) : QWidget(parent)
@@ -55,8 +83,8 @@ public:
 		auto *root = new QVBoxLayout(this);
 
 		table = new QTableWidget(0, 3, this);
-		table->setHorizontalHeaderLabels({QStringLiteral("Cámara"), QStringLiteral("Estado"),
-						  QStringLiteral("Tiempo")});
+		table->setHorizontalHeaderLabels({T("InstantRecord.Dock.Camera"), T("InstantRecord.Dock.Status"),
+						  T("InstantRecord.Dock.Time")});
 		table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 		table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 		table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -70,17 +98,20 @@ public:
 		root->addWidget(summary);
 
 		auto *btns = new QHBoxLayout();
-		auto *startAll = new QPushButton(QStringLiteral("Iniciar todo"), this);
-		auto *stopAll = new QPushButton(QStringLiteral("Detener todo"), this);
-		auto *config = new QPushButton(QStringLiteral("Config global…"), this);
+		auto *startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
+		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
+		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
+		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
+		btns->addWidget(saveAll);
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
 
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
+		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
 
 		auto *timer = new QTimer(this);
@@ -109,17 +140,17 @@ private:
 			QColor col;
 			switch (rows[i].status) {
 			case SR_STATUS_RECORDING:
-				st = QStringLiteral("● REC");
+				st = T("InstantRecord.Dock.Rec");
 				col = QColor("#ff8f8a");
 				rec++;
 				break;
 			case SR_STATUS_ERROR:
-				st = QStringLiteral("⚠ error");
+				st = T("InstantRecord.Dock.Error");
 				col = QColor("#f0b263");
 				err++;
 				break;
 			default:
-				st = QStringLiteral("○ idle");
+				st = T("InstantRecord.Dock.Idle");
 				col = QColor("#8b96a1");
 				idle++;
 				break;
@@ -133,19 +164,19 @@ private:
 			table->setItem(i, 2, time);
 		}
 		table->resizeRowsToContents();
-		summary->setText(QString::asprintf("%d grabando · %d en espera · %d error", rec, idle, err));
+		summary->setText(T("InstantRecord.Dock.Summary").arg(rec).arg(idle).arg(err));
 	}
 
 	void openGlobalConfig()
 	{
 		QDialog dlg(this);
-		dlg.setWindowTitle(QStringLiteral("Configuración global — aplicar a todas las cámaras"));
+		dlg.setWindowTitle(T("InstantRecord.Global.Title"));
 		auto *grid = new QGridLayout(&dlg);
 		int r = 0;
 
-		grid->addWidget(new QLabel(QStringLiteral("Carpeta de salida")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.OutputFolder")), r, 0);
 		auto *pathEdit = new QLineEdit(&dlg);
-		auto *browse = new QPushButton(QStringLiteral("Examinar…"), &dlg);
+		auto *browse = new QPushButton(T("InstantRecord.Global.Browse"), &dlg);
 		connect(browse, &QPushButton::clicked, &dlg, [&] {
 			QString d = QFileDialog::getExistingDirectory(&dlg);
 			if (!d.isEmpty())
@@ -154,12 +185,14 @@ private:
 		grid->addWidget(pathEdit, r, 1);
 		grid->addWidget(browse, r++, 2);
 
-		grid->addWidget(new QLabel(QStringLiteral("Contenedor")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Container")), r, 0);
 		auto *fmt = new QComboBox(&dlg);
-		fmt->addItems({QStringLiteral("mkv"), QStringLiteral("mp4"), QStringLiteral("mov")});
+		fmt->addItem("mkv", "mkv");
+		fmt->addItem("mp4", "mp4");
+		fmt->addItem("mov", "mov");
 		grid->addWidget(fmt, r++, 1);
 
-		grid->addWidget(new QLabel(QStringLiteral("Encoder de vídeo")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Encoder")), r, 0);
 		auto *enc = new QComboBox(&dlg);
 		const char *encId;
 		size_t ei = 0;
@@ -171,41 +204,56 @@ private:
 		}
 		grid->addWidget(enc, r++, 1);
 
-		grid->addWidget(new QLabel(QStringLiteral("Bitrate (Kbps)")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Bitrate")), r, 0);
 		auto *bitrate = new QSpinBox(&dlg);
 		bitrate->setRange(500, 100000);
 		bitrate->setSingleStep(500);
 		bitrate->setValue(6000);
 		grid->addWidget(bitrate, r++, 1);
 
-		grid->addWidget(new QLabel(QStringLiteral("Disparador")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Trigger")), r, 0);
 		auto *mode = new QComboBox(&dlg);
-		mode->addItem(QStringLiteral("Con la grabación principal de OBS"), 0);
-		mode->addItem(QStringLiteral("Manual (atajo)"), 1);
-		mode->addItem(QStringLiteral("Siempre (fuente activa)"), 2);
+		mode->addItem(T("InstantRecord.Global.Trigger.Main"), 0);
+		mode->addItem(T("InstantRecord.Global.Trigger.Manual"), 1);
+		mode->addItem(T("InstantRecord.Global.Trigger.Always"), 2);
 		grid->addWidget(mode, r++, 1);
 
-		grid->addWidget(new QLabel(QStringLiteral("Escala (tope)")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Scale")), r, 0);
 		auto *scale = new QComboBox(&dlg);
-		scale->addItem(QStringLiteral("Nativa"), 0);
-		scale->addItem(QStringLiteral("1080p"), 1);
-		scale->addItem(QStringLiteral("720p"), 2);
-		scale->addItem(QStringLiteral("480p"), 3);
+		scale->addItem(T("InstantRecord.Global.Scale.Native"), 0);
+		scale->addItem("1080p", 1);
+		scale->addItem("720p", 2);
+		scale->addItem("480p", 3);
 		grid->addWidget(scale, r++, 1);
 
-		grid->addWidget(new QLabel(QStringLiteral("Frame rate")), r, 0);
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Fps")), r, 0);
 		auto *fps = new QComboBox(&dlg);
-		fps->addItem(QStringLiteral("Completo"), 1);
-		fps->addItem(QStringLiteral("Mitad"), 2);
-		fps->addItem(QStringLiteral("Un cuarto"), 4);
+		fps->addItem(T("InstantRecord.Global.Fps.Full"), 1);
+		fps->addItem(T("InstantRecord.Global.Fps.Half"), 2);
+		fps->addItem(T("InstantRecord.Global.Fps.Quarter"), 4);
 		grid->addWidget(fps, r++, 1);
 
-		auto *isolate = new QCheckBox(QStringLiteral("Aislar audio por fuente"), &dlg);
+		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
 		isolate->setChecked(true);
 		grid->addWidget(isolate, r++, 1);
 
-		auto *apply = new QPushButton(QStringLiteral("Aplicar a todas"), &dlg);
-		auto *cancel = new QPushButton(QStringLiteral("Cancelar"), &dlg);
+		/* Restore the last-applied values, if any. */
+		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
+		if (saved) {
+			pathEdit->setText(QString::fromUtf8(obs_data_get_string(saved, "path")));
+			selectByData(fmt, QString(obs_data_get_string(saved, "container")));
+			selectByData(enc, QString(obs_data_get_string(saved, "encoder")));
+			if (obs_data_get_int(saved, "bitrate") > 0)
+				bitrate->setValue((int)obs_data_get_int(saved, "bitrate"));
+			selectByData(mode, (int)obs_data_get_int(saved, "trigger"));
+			selectByData(scale, (int)obs_data_get_int(saved, "scale"));
+			selectByData(fps, (int)obs_data_get_int(saved, "fps"));
+			isolate->setChecked(obs_data_get_bool(saved, "isolate"));
+			obs_data_release(saved);
+		}
+
+		auto *apply = new QPushButton(T("InstantRecord.Global.ApplyAll"), &dlg);
+		auto *cancel = new QPushButton(T("InstantRecord.Global.Cancel"), &dlg);
 		auto *bl = new QHBoxLayout();
 		bl->addStretch();
 		bl->addWidget(cancel);
@@ -215,7 +263,7 @@ private:
 		connect(cancel, &QPushButton::clicked, &dlg, [&] { dlg.reject(); });
 		connect(apply, &QPushButton::clicked, &dlg, [&] {
 			QByteArray path = pathEdit->text().toUtf8();
-			QByteArray fmtId = fmt->currentText().toUtf8();
+			QByteArray fmtId = fmt->currentData().toString().toUtf8();
 			QByteArray encStr = enc->currentData().toString().toUtf8();
 
 			struct sr_global_config cfg;
@@ -228,6 +276,20 @@ private:
 			cfg.scale_mode = scale->currentData().toInt();
 			cfg.fps_divisor = fps->currentData().toInt();
 			sr_registry_apply_config(&cfg);
+
+			/* Remember these values for next time. */
+			obs_data_t *d = obs_data_create();
+			obs_data_set_string(d, "path", path.constData());
+			obs_data_set_string(d, "container", fmtId.constData());
+			obs_data_set_string(d, "encoder", encStr.constData());
+			obs_data_set_int(d, "bitrate", bitrate->value());
+			obs_data_set_int(d, "trigger", mode->currentData().toInt());
+			obs_data_set_int(d, "scale", scale->currentData().toInt());
+			obs_data_set_int(d, "fps", fps->currentData().toInt());
+			obs_data_set_bool(d, "isolate", isolate->isChecked());
+			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
+			obs_data_release(d);
+
 			dlg.accept();
 		});
 

@@ -86,6 +86,8 @@ struct source_record_filter {
 	int fps_divisor;  /* 1 full, 2 half, 4 quarter                 */
 	bool encoder_fallback;    /* try fallback encoder on start fail */
 	char *fallback_encoder_id;
+	bool use_buffer;   /* replay-buffer mode instead of continuous  */
+	int buffer_seconds;/* how many seconds to keep buffered         */
 
 	/* Runtime state. */
 	enum sr_status status;
@@ -98,6 +100,7 @@ struct source_record_filter {
 
 	/* Hotkeys. */
 	obs_hotkey_pair_id record_hotkey_pair;
+	obs_hotkey_id save_hotkey; /* save a replay clip (buffer mode)  */
 
 	/* Roadmap: manifest.json entry for ISO multicam sync. */
 	int64_t start_timestamp_ns; /* monotonic — precise inter-cam offset */
@@ -117,6 +120,7 @@ extern "C" {
 /* Registry — stops every active recorder on shutdown, drives the dock. */
 void sr_registry_stop_all(void);
 void sr_registry_start_all(void);
+void sr_registry_save_all(void); /* save a clip from every buffered camera */
 
 /* Thread-safe snapshot of one recorder, for the status dock. */
 struct sr_status_row {
