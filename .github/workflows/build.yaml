@@ -7,7 +7,7 @@ jobs:
     name: Build for Windows x64
     runs-on: windows-latest
     steps:
-      - name: Check out repository
+      - name: Check out repository 
         uses: actions/checkout@v4
       - name: Detect Visual Studio generator
         id: vs
