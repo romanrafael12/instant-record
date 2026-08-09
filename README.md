@@ -6,6 +6,13 @@ by <a href="https://instanrp.com">Instant Replay</a></p>
 
 Instant Record records **each camera to its own file** and keeps a **per-camera replay buffer**, so you can grab a clip of every angle the instant something happens. Built for live multi-camera work by **[Instant Replay](https://instanrp.com)**.
 
+## Screenshots
+
+<!-- Drag your screenshots right here while editing this file on GitHub — it uploads and links them automatically. -->
+<!-- Or commit images to a screenshots/ folder and use: <p align="center"><img src="screenshots/dock.png" width="600"/></p> -->
+
+_The dock and a source's filter — add your screenshots here._
+
 ## Install (Windows)
 
 1. Download the latest **`instant-record-windows-x64`** from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab → newest green run → **Artifacts**. (Or grab the **`InstantRecord-Setup.exe`** installer from the `instant-record-installer` artifact and skip the manual copy.)
@@ -25,12 +32,6 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
    - **Trigger** — *with OBS main recording*, *manual (hotkey)*, or *always*. Or turn on **Replay buffer mode** to save clips on demand.
    - **Encoder / bitrate / container** (see below).
 3. Run it from the dock: **Start all / Stop all / Save all clips**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant" — assign *Save all clips*, *Start all*, and *Stop all*.
-
-Buffer per cam: 
-<img width="345" height="276" alt="image" src="https://github.com/user-attachments/assets/13895466-3261-464e-accd-d8e209055455" />
-Global Config:
-<img width="364" height="325" alt="image" src="https://github.com/user-attachments/assets/776bd587-a491-4130-83de-01d20daa0d7c" />
-
 
 ## Encoders that work
 
