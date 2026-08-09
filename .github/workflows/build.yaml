@@ -9,42 +9,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Detect latest Windows SDK
-        id: sdk
-        shell: pwsh
-        run: |
-          $roots = @(
-            "${env:ProgramFiles(x86)}\Windows Kits\10\include",
-            "${env:ProgramFiles}\Windows Kits\10\include"
-          )
-          $versions = foreach ($root in $roots) {
-            if (Test-Path $root) {
-              Get-ChildItem -Path $root -Directory |
-                Where-Object { Test-Path (Join-Path $_.FullName 'um') } |
-                ForEach-Object { $_.Name }
-            }
-          }
-          $latest = $versions | Sort-Object { [version]$_ } | Select-Object -Last 1
-          if (-not $latest) { Write-Error "No Windows SDK found"; exit 1 }
-          Write-Host "Using Windows SDK $latest"
-          "version=$latest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-          sdk: ${{ steps.sdk.outputs.version }}
-      - name: Configure (Qt + frontend ON)
-        shell: pwsh
-        run: |
-          cmake -S . -B build_x64 -G Ninja `
-            -DENABLE_QT=ON `
-            -DENABLE_FRONTEND_API=ON `
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
-            -DCMAKE_VS_PLATFORM_NAME=x64 `
-            "-DCMAKE_SYSTEM_VERSION=${{ steps.sdk.outputs.version }}" `
-            "-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION=${{ steps.sdk.outputs.version }}"
+      - name: Configure
+        run: cmake --preset windows-ci-x64
       - name: Build
-        run: cmake --build build_x64
+        run: cmake --build --preset windows-ci-x64
       - name: Assemble plugin
         run: >
           cmake --install build_x64
