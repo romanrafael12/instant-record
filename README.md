@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="data/locale/logo.png" width="96" alt="Instant Replay logo"/>
-</p>
 
 <h1 align="center">Instant Record</h1>
 <p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b><br/>
