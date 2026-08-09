@@ -41,6 +41,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QFileDialog>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -328,6 +329,26 @@ private:
 			del->setToolTip(T("InstantRecord.Dock.Remove"));
 			QString srcName = QString::fromUtf8(rows[i].name);
 			connect(del, &QPushButton::clicked, del, [this, srcName] {
+				/* If this camera is actively recording/buffering,
+				 * confirm before pulling the filter mid-take. */
+				struct sr_status_row now[64];
+				size_t cnt = sr_registry_snapshot(now, 64);
+				bool active = false;
+				for (size_t j = 0; j < cnt; j++) {
+					if (srcName == QString::fromUtf8(now[j].name) &&
+					    now[j].status == SR_STATUS_RECORDING) {
+						active = true;
+						break;
+					}
+				}
+				if (active) {
+					auto res = QMessageBox::warning(this, T("InstantRecord.Dock.Remove"),
+									T("InstantRecord.Remove.Confirm"),
+									QMessageBox::Yes | QMessageBox::No,
+									QMessageBox::No);
+					if (res != QMessageBox::Yes)
+						return;
+				}
 				sr_remove_filter_from_source(srcName);
 				lastSig.clear(); /* force rebuild */
 				refresh();
