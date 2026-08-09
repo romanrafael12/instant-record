@@ -26,7 +26,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <string>
 #include <vector>
 #include <cstring>
-#include <functional>
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -43,11 +42,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QCheckBox>
 #include <QListWidget>
 #include <QFileDialog>
-#include <QKeyEvent>
-#include <QKeySequence>
-#include <QFocusEvent>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
+#include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QMimeData>
 #include <QDataStream>
@@ -97,20 +94,6 @@ static void selectByData(QComboBox *c, const QVariant &v)
 		c->setCurrentIndex(i);
 }
 
-static uint32_t qtToObsMods(Qt::KeyboardModifiers m)
-{
-	uint32_t r = 0;
-	if (m & Qt::ShiftModifier)
-		r |= INTERACT_SHIFT_KEY;
-	if (m & Qt::ControlModifier)
-		r |= INTERACT_CONTROL_KEY;
-	if (m & Qt::AltModifier)
-		r |= INTERACT_ALT_KEY;
-	if (m & Qt::MetaModifier)
-		r |= INTERACT_COMMAND_KEY;
-	return r;
-}
-
 /* True if the source already carries an Instant Record filter. */
 static bool sr_source_has_filter(obs_source_t *src)
 {
@@ -144,67 +127,29 @@ static bool sr_collect_sources(void *data, obs_source_t *src)
 	return true;
 }
 
-/* Create and attach an Instant Record filter to a source by name. */
-static void sr_add_filter_to_source(const QString &name)
+/* Add the filter to a source by name. Returns true if it was a video
+ * source that didn't already have it. */
+static bool sr_add_filter_to_source(const QString &name)
 {
+	if (name.isEmpty())
+		return false;
 	obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
 	if (!src)
-		return;
-	obs_source_t *flt = obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
-	if (flt) {
-		obs_source_filter_add(src, flt);
-		obs_source_release(flt);
+		return false;
+	uint32_t flags = obs_source_get_output_flags(src);
+	enum obs_source_type t = obs_source_get_type(src);
+	bool ok = (flags & OBS_SOURCE_VIDEO) && t != OBS_SOURCE_TYPE_FILTER &&
+		  t != OBS_SOURCE_TYPE_TRANSITION && !sr_source_has_filter(src);
+	if (ok) {
+		obs_source_t *flt = obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
+		if (flt) {
+			obs_source_filter_add(src, flt);
+			obs_source_release(flt);
+		}
 	}
 	obs_source_release(src);
+	return ok;
 }
-
-/* A button that captures the next key press and reports it as an OBS
- * key + modifiers. No Q_OBJECT needed — it uses a std::function. */
-class HotkeyButton : public QPushButton {
-public:
-	std::function<void(uint32_t, int, QString)> onCapture;
-	bool capturing = false;
-	explicit HotkeyButton(QWidget *p = nullptr) : QPushButton(p) { setFocusPolicy(Qt::StrongFocus); }
-	void startCapture()
-	{
-		capturing = true;
-		setText(QStringLiteral("…"));
-		setFocus();
-		grabKeyboard();
-	}
-
-protected:
-	void keyPressEvent(QKeyEvent *e) override
-	{
-		if (!capturing) {
-			QPushButton::keyPressEvent(e);
-			return;
-		}
-		int k = e->key();
-		if (k == Qt::Key_Shift || k == Qt::Key_Control || k == Qt::Key_Alt || k == Qt::Key_Meta ||
-		    k == Qt::Key_AltGr)
-			return; /* wait for a real key */
-		capturing = false;
-		releaseKeyboard();
-		if (k == Qt::Key_Escape) {
-			if (onCapture)
-				onCapture(0, 0, QString()); /* clear */
-			return;
-		}
-		int obskey = (int)obs_key_from_virtual_key((int)e->nativeVirtualKey());
-		QString disp = QKeySequence((int)(e->modifiers() & ~Qt::KeypadModifier) | k).toString(QKeySequence::NativeText);
-		if (onCapture)
-			onCapture(qtToObsMods(e->modifiers()), obskey, disp);
-	}
-	void focusOutEvent(QFocusEvent *e) override
-	{
-		if (capturing) {
-			capturing = false;
-			releaseKeyboard();
-		}
-		QPushButton::focusOutEvent(e);
-	}
-};
 
 struct Card {
 	QFrame *w;
@@ -222,17 +167,19 @@ public:
 		setStyleSheet(
 			"QWidget{background:" IR_BG ";color:" IR_TEXT ";font-size:12px;}"
 			"QLabel{background:transparent;}"
-			"QLabel#title{font-size:15px;font-weight:800;}"
+			"QLabel#title{font-size:14px;font-weight:800;}"
 			"QLabel#subtitle{font-size:10px;font-weight:600;color:" IR_GOLD ";}"
+			"QLabel#drop{border:2px dashed #24242a;border-radius:10px;color:#5a5f65;padding:12px;}"
 			"QFrame#card{background:" IR_CARD ";border:1px solid #17171b;border-radius:12px;}"
+			"QListWidget{background:" IR_CARD ";border:1px solid #17171b;border-radius:8px;}"
 			"QPushButton{background:#161618;color:" IR_TEXT
-			";border:1px solid #2a2a2e;border-radius:14px;padding:8px 14px;font-weight:700;}"
+			";border:1px solid #2a2a2e;border-radius:12px;padding:5px 11px;font-weight:700;font-size:12px;}"
 			"QPushButton:hover{border-color:" IR_GOLD ";}"
 			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0564f,stop:1 #c9322c);border:none;color:#fff;}"
 			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;}"
-			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:13px;padding:5px 14px;}"
-			"QPushButton#hk{background:transparent;border:none;border-radius:10px;padding:4px 10px;font-size:11px;font-weight:700;color:#8b939b;}"
-			"QPushButton#hk:hover{background:#1c1c20;color:" IR_GOLD ";}");
+			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;font-weight:800;}"
+			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
+			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}");
 
 		auto *root = new QVBoxLayout(this);
 		root->setContentsMargins(10, 10, 10, 10);
@@ -248,7 +195,7 @@ public:
 			bfree(logoPath);
 		}
 		if (!pix.isNull())
-			logo->setPixmap(pix.scaled(30, 30, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+			logo->setPixmap(pix.scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 		header->addWidget(logo);
 		auto *titleBox = new QVBoxLayout();
 		titleBox->setSpacing(0);
@@ -265,30 +212,28 @@ public:
 		header->addWidget(counters);
 		root->addLayout(header);
 
-		/* Scrollable-ish card container. */
 		cardsBox = new QVBoxLayout();
 		cardsBox->setSpacing(6);
 		root->addLayout(cardsBox);
-		placeholder = new QLabel(T("InstantRecord.Dock.DropHint"), this);
-		placeholder->setAlignment(Qt::AlignCenter);
-		placeholder->setWordWrap(true);
-		placeholder->setStyleSheet("color:#4a5560;font-size:12px;padding:22px;");
-		root->addWidget(placeholder);
-		root->addStretch();
 
-		setAcceptDrops(true); /* drag a source from OBS onto the dock */
+		/* Always-visible drop zone. */
+		dropZone = new QLabel(T("InstantRecord.Dock.DropHint"), this);
+		dropZone->setObjectName("drop");
+		dropZone->setAlignment(Qt::AlignCenter);
+		dropZone->setWordWrap(true);
+		root->addWidget(dropZone);
+		root->addStretch();
+		setAcceptDrops(true);
 
 		/* Bottom action bar. */
 		auto *btns = new QHBoxLayout();
 		auto *startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
 		startAll->setObjectName("start");
-		shadow(startAll);
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
 		saveAll->setObjectName("save");
-		shadow(saveAll);
-		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		auto *addCams = new QPushButton(T("InstantRecord.Dock.AddCams"), this);
+		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
@@ -312,38 +257,13 @@ public:
 private:
 	QVBoxLayout *cardsBox;
 	QLabel *counters;
-	QLabel *placeholder;
+	QLabel *dropZone;
 	std::vector<Card> cards;
 	QString lastSig;
-
-	static void shadow(QWidget *w)
-	{
-		auto *e = new QGraphicsDropShadowEffect(w);
-		e->setBlurRadius(12);
-		e->setOffset(0, 3);
-		e->setColor(QColor(0, 0, 0, 150));
-		w->setGraphicsEffect(e);
-	}
-
-	HotkeyButton *makeHk(const char *glyph, int camIndex, int which)
-	{
-		auto *b = new HotkeyButton();
-		b->setObjectName("hk");
-		QString g = QString::fromUtf8(glyph);
-		char cur[128];
-		sr_registry_hotkey_str((size_t)camIndex, which, cur, sizeof(cur));
-		b->setText(g + " " + (cur[0] ? QString::fromUtf8(cur) : QStringLiteral("—")));
-		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
-		b->onCapture = [b, camIndex, which, g](uint32_t mods, int key, QString disp) {
-			sr_registry_bind_hotkey((size_t)camIndex, which, mods, key);
-			b->setText(g + " " + (disp.isEmpty() ? QStringLiteral("\xE2\x80\x94") : disp));
-		};
-		return b;
-	}
+	bool blinkOn = false;
 
 	void rebuildCards(struct sr_status_row *rows, size_t n)
 	{
-		/* Clear old cards. */
 		for (auto &c : cards)
 			c.w->deleteLater();
 		cards.clear();
@@ -354,13 +274,13 @@ private:
 		for (int i = 0; i < (int)n; i++) {
 			auto *card = new QFrame();
 			card->setObjectName("card");
-			auto *cl = new QVBoxLayout(card);
-			cl->setContentsMargins(10, 8, 10, 8);
-			cl->setSpacing(6);
+			auto *cl = new QHBoxLayout(card);
+			cl->setContentsMargins(12, 10, 12, 10);
+			cl->setSpacing(8);
 
-			auto *r1 = new QHBoxLayout();
-			auto *dot = new QLabel("●");
-			auto *nm = new QLabel(QString("%1\n%2x%3 · %4")
+			auto *dot = new QLabel(QStringLiteral("\xE2\x97\x8F"));
+			dot->setStyleSheet("font-size:14px;");
+			auto *nm = new QLabel(QString("%1\n%2x%3 \xC2\xB7 %4")
 						      .arg(rows[i].name)
 						      .arg(rows[i].width)
 						      .arg(rows[i].height)
@@ -370,38 +290,31 @@ private:
 			stt->setStyleSheet("font-weight:800;");
 			auto *tm = new QLabel();
 			tm->setStyleSheet("color:#c9d0d6;");
-			r1->addWidget(dot);
-			r1->addWidget(nm);
-			r1->addStretch();
-			r1->addWidget(stt);
-			r1->addSpacing(8);
-			r1->addWidget(tm);
-			cl->addLayout(r1);
-
-			auto *r2 = new QHBoxLayout();
-			r2->addWidget(makeHk("\xE2\x96\xB6", i, SR_HK_START)); /* ▶ */
-			r2->addWidget(makeHk("\xE2\x96\xA0", i, SR_HK_STOP));  /* ■ */
-			r2->addWidget(makeHk("\xE2\x98\x85", i, SR_HK_SAVE));  /* ★ */
-			r2->addStretch();
 			auto *clip = new QPushButton(T("InstantRecord.Dock.Save"));
 			clip->setObjectName("clip");
 			int idx = i;
 			connect(clip, &QPushButton::clicked, clip, [idx] { sr_registry_save_index((size_t)idx); });
-			r2->addWidget(clip);
-			cl->addLayout(r2);
+
+			cl->addWidget(dot);
+			cl->addWidget(nm);
+			cl->addStretch();
+			cl->addWidget(stt);
+			cl->addSpacing(6);
+			cl->addWidget(tm);
+			cl->addSpacing(6);
+			cl->addWidget(clip);
 
 			cardsBox->addWidget(card);
-			Card c{card, dot, stt, tm, clip, i};
-			cards.push_back(c);
+			cards.push_back({card, dot, stt, tm, clip, i});
 		}
 	}
 
 	void refresh()
 	{
+		blinkOn = !blinkOn;
 		struct sr_status_row rows[64];
 		size_t n = sr_registry_snapshot(rows, 64);
 
-		/* Signature: rebuild cards only when the camera set changes. */
 		QString sig = QString::number(n);
 		for (size_t i = 0; i < n; i++)
 			sig += "|" + QString::fromUtf8(rows[i].name);
@@ -414,39 +327,39 @@ private:
 		for (int i = 0; i < (int)n && i < (int)cards.size(); i++) {
 			Card &c = cards[i];
 			QString st;
-			QColor col;
-			bool buffering = false;
+			QString colName;
+			bool active = false;
 			switch (rows[i].status) {
 			case SR_STATUS_RECORDING:
 				if (rows[i].use_buffer) {
-					st = QStringLiteral("● BUF");
-					col = QColor(IR_GOLD);
-					buffering = true;
+					st = QStringLiteral("\xE2\x97\x8F BUF");
+					colName = IR_GOLD;
 					buf++;
 				} else {
 					st = T("InstantRecord.Dock.Rec");
-					col = QColor(IR_RED);
+					colName = IR_RED;
 					rec++;
 				}
+				active = true;
 				break;
 			case SR_STATUS_ERROR:
 				st = T("InstantRecord.Dock.Error");
-				col = QColor("#f0a050");
+				colName = "#f0a050";
 				err++;
 				break;
 			default:
 				st = T("InstantRecord.Dock.Idle");
-				col = QColor(IR_MUTED);
+				colName = IR_MUTED;
 				idle++;
 				break;
 			}
-			c.dot->setStyleSheet(QString("color:%1;").arg(col.name()));
+			/* Blink the dot while active so it reads as "live". */
+			QString dotCol = (active && !blinkOn) ? "#333333" : colName;
+			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(dotCol));
 			c.status->setText(st);
-			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(col.name()));
+			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
 			c.time->setText(format_elapsed(rows[i].elapsed_ns));
-			bool showClip = rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING;
-			c.clip->setVisible(showClip);
-			(void)buffering;
+			c.clip->setVisible(rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING);
 		}
 		counters->setText(QString("<span style='color:" IR_RED "'>%1 REC</span>  "
 					  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
@@ -454,77 +367,6 @@ private:
 					  .arg(rec)
 					  .arg(buf)
 					  .arg(idle));
-		placeholder->setVisible(n == 0);
-	}
-
-	/* Try to add the Instant Record filter to a source by name. Returns
-	 * true only if it was a video source that didn't already have it. */
-	bool tryAddByName(const QString &name)
-	{
-		if (name.isEmpty())
-			return false;
-		obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
-		if (!src)
-			return false;
-		uint32_t flags = obs_source_get_output_flags(src);
-		enum obs_source_type t = obs_source_get_type(src);
-		bool ok = (flags & OBS_SOURCE_VIDEO) && t != OBS_SOURCE_TYPE_FILTER &&
-			  t != OBS_SOURCE_TYPE_TRANSITION && !sr_source_has_filter(src);
-		if (ok) {
-			obs_source_t *flt =
-				obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
-			if (flt) {
-				obs_source_filter_add(src, flt);
-				obs_source_release(flt);
-			}
-		}
-		obs_source_release(src);
-		return ok;
-	}
-
-protected:
-	void dragEnterEvent(QDragEnterEvent *e) override
-	{
-		if (e->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist") ||
-		    e->mimeData()->hasText())
-			e->acceptProposedAction();
-	}
-	void dragMoveEvent(QDragMoveEvent *e) override { e->acceptProposedAction(); }
-	void dropEvent(QDropEvent *e) override
-	{
-		const QMimeData *m = e->mimeData();
-		int added = 0;
-		if (m->hasFormat("application/x-qabstractitemmodeldatalist")) {
-			QByteArray enc = m->data("application/x-qabstractitemmodeldatalist");
-			QDataStream s(&enc, QIODevice::ReadOnly);
-			while (!s.atEnd()) {
-				int row = 0, col = 0;
-				QMap<int, QVariant> roles;
-				s >> row >> col >> roles;
-				QString name = roles.value(Qt::DisplayRole).toString();
-				if (tryAddByName(name))
-					added++;
-			}
-		}
-		if (added == 0 && m->hasText())
-			tryAddByName(m->text().trimmed());
-		e->acceptProposedAction();
-		refresh();
-	}
-
-private:
-
-	HotkeyButton *makeHkAll(const QString &label, int which)
-	{
-		auto *b = new HotkeyButton();
-		b->setObjectName("hk");
-		b->setText(label);
-		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
-		b->onCapture = [b, which, label](uint32_t mods, int key, QString disp) {
-			sr_registry_bind_hotkey_all(which, mods, key);
-			b->setText(label + " " + (disp.isEmpty() ? QStringLiteral("\xE2\x9C\x93") : disp));
-		};
-		return b;
 	}
 
 	void pickAndAddCameras()
@@ -537,7 +379,7 @@ private:
 				  "QLabel{color:" IR_TEXT ";}"
 				  "QListWidget{background:" IR_CARD ";border:1px solid #17171b;border-radius:8px;}"
 				  "QPushButton{background:#161618;color:" IR_TEXT
-				  ";border:1px solid #2a2a2e;border-radius:14px;padding:7px 14px;}"
+				  ";border:1px solid #2a2a2e;border-radius:12px;padding:6px 12px;}"
 				  "QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);color:#3a2a08;border:none;font-weight:800;}");
 		dlg.setWindowTitle(T("InstantRecord.Add.Title"));
 		auto *v = new QVBoxLayout(&dlg);
@@ -547,13 +389,31 @@ private:
 			v->addWidget(new QLabel(T("InstantRecord.Add.None")));
 		} else {
 			v->addWidget(new QLabel(T("InstantRecord.Add.Pick")));
+			auto *selRow = new QHBoxLayout();
+			auto *selAll = new QPushButton(T("InstantRecord.Add.SelectAll"), &dlg);
+			auto *selNone = new QPushButton(T("InstantRecord.Add.SelectNone"), &dlg);
+			selRow->addWidget(selAll);
+			selRow->addWidget(selNone);
+			selRow->addStretch();
+			v->addLayout(selRow);
+
 			list = new QListWidget(&dlg);
-			for (const QString &n : names) {
-				auto *it = new QListWidgetItem(n, list);
+			for (const QString &nmn : names) {
+				auto *it = new QListWidgetItem(nmn, list);
 				it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
 				it->setCheckState(Qt::Checked);
 			}
 			v->addWidget(list);
+
+			QListWidget *lw = list;
+			connect(selAll, &QPushButton::clicked, &dlg, [lw] {
+				for (int i = 0; i < lw->count(); i++)
+					lw->item(i)->setCheckState(Qt::Checked);
+			});
+			connect(selNone, &QPushButton::clicked, &dlg, [lw] {
+				for (int i = 0; i < lw->count(); i++)
+					lw->item(i)->setCheckState(Qt::Unchecked);
+			});
 		}
 
 		auto *row = new QHBoxLayout();
@@ -582,15 +442,48 @@ private:
 		refresh();
 	}
 
+protected:
+	void dragEnterEvent(QDragEnterEvent *e) override
+	{
+		if (e->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist") || e->mimeData()->hasText()) {
+			dropZone->setStyleSheet("border:2px dashed " IR_GOLD ";border-radius:10px;color:" IR_GOLD
+						";padding:12px;");
+			e->acceptProposedAction();
+		}
+	}
+	void dragMoveEvent(QDragMoveEvent *e) override { e->acceptProposedAction(); }
+	void dragLeaveEvent(QDragLeaveEvent *) override { dropZone->setStyleSheet(""); }
+	void dropEvent(QDropEvent *e) override
+	{
+		const QMimeData *m = e->mimeData();
+		int added = 0;
+		if (m->hasFormat("application/x-qabstractitemmodeldatalist")) {
+			QByteArray enc = m->data("application/x-qabstractitemmodeldatalist");
+			QDataStream s(&enc, QIODevice::ReadOnly);
+			while (!s.atEnd()) {
+				int rrow = 0, rcol = 0;
+				QMap<int, QVariant> roles;
+				s >> rrow >> rcol >> roles;
+				if (sr_add_filter_to_source(roles.value(Qt::DisplayRole).toString()))
+					added++;
+			}
+		}
+		if (added == 0 && m->hasText())
+			sr_add_filter_to_source(m->text().trimmed());
+		e->acceptProposedAction();
+		dropZone->setStyleSheet("");
+		refresh();
+	}
+
+private:
 	void openGlobalConfig()
 	{
 		QDialog dlg(this);
 		dlg.setStyleSheet("QDialog{background:" IR_BG ";color:" IR_TEXT ";}"
 				  "QLabel{color:" IR_TEXT ";}"
 				  "QPushButton{background:#161618;color:" IR_TEXT
-				  ";border:1px solid #2a2a2e;border-radius:14px;padding:7px 14px;}"
-				  "QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);color:#3a2a08;border:none;font-weight:800;}"
-				  "QPushButton#hk{background:#141416;border:1px solid #26262b;border-radius:9px;padding:4px 10px;}");
+				  ";border:1px solid #2a2a2e;border-radius:12px;padding:6px 12px;}"
+				  "QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);color:#3a2a08;border:none;font-weight:800;}");
 		dlg.setWindowTitle(T("InstantRecord.Global.Title"));
 		auto *grid = new QGridLayout(&dlg);
 		int r = 0;
@@ -665,15 +558,6 @@ private:
 
 		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
 		grid->addWidget(isolate, r++, 1);
-
-		/* Global hotkeys — bind the same key to every camera at once. */
-		grid->addWidget(new QLabel(T("InstantRecord.Global.Hotkeys")), r, 0);
-		auto *hkRow = new QHBoxLayout();
-		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkStart"), SR_HK_START));
-		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkStop"), SR_HK_STOP));
-		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkSave"), SR_HK_SAVE));
-		hkRow->addStretch();
-		grid->addLayout(hkRow, r++, 1, 1, 2);
 
 		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
 		if (saved) {
