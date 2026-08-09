@@ -268,10 +268,11 @@ void sr_registry_apply_config(const struct sr_global_config *cfg)
 	pthread_mutex_lock(&sr_registry_lock);
 	for (size_t i = 0; i < sr_registry.num; i++) {
 		struct source_record_filter *f = sr_registry.array[i];
-		/* Update the persisted settings so the change survives save/
-		 * reload and shows in each filter's UI; obs_source_update then
-		 * calls sr_update, which refreshes runtime fields under lock. */
-		obs_data_t *s = obs_source_get_settings(f->source);
+		/* Build a fresh settings object with only the fields being
+		 * changed; obs_source_update merges it over the existing
+		 * settings and invokes sr_update. Merging a small delta is
+		 * more reliable than mutating the live settings in place. */
+		obs_data_t *s = obs_data_create();
 		if (cfg->path)
 			obs_data_set_string(s, "path", cfg->path);
 		if (cfg->rec_format)

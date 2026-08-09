@@ -94,6 +94,26 @@ static void selectByData(QComboBox *c, const QVariant &v)
 		c->setCurrentIndex(i);
 }
 
+/* Only real video feeds — cameras, browsers, media, captures, images.
+ * Excludes text/color overlays, filters, transitions, audio. */
+static bool sr_is_recordable(obs_source_t *src)
+{
+	uint32_t flags = obs_source_get_output_flags(src);
+	if (!(flags & OBS_SOURCE_VIDEO))
+		return false;
+	enum obs_source_type t = obs_source_get_type(src);
+	if (t == OBS_SOURCE_TYPE_FILTER || t == OBS_SOURCE_TYPE_TRANSITION)
+		return false;
+	const char *id = obs_source_get_id(src);
+	if (!id)
+		return false;
+	if (strncmp(id, "text_", 5) == 0)
+		return false; /* text (GDI+/FreeType) can't carry a real feed */
+	if (strncmp(id, "color_source", 12) == 0)
+		return false; /* solid color */
+	return true;
+}
+
 /* True if the source already carries an Instant Record filter. */
 static bool sr_source_has_filter(obs_source_t *src)
 {
@@ -109,17 +129,11 @@ static bool sr_source_has_filter(obs_source_t *src)
 	return found;
 }
 
-/* Collect names of video sources that don't have the filter yet. */
+/* Collect names of recordable video sources that don't have the filter. */
 static bool sr_collect_sources(void *data, obs_source_t *src)
 {
 	auto *names = static_cast<std::vector<QString> *>(data);
-	uint32_t flags = obs_source_get_output_flags(src);
-	if (!(flags & OBS_SOURCE_VIDEO))
-		return true;
-	enum obs_source_type t = obs_source_get_type(src);
-	if (t == OBS_SOURCE_TYPE_FILTER || t == OBS_SOURCE_TYPE_TRANSITION)
-		return true;
-	if (sr_source_has_filter(src))
+	if (!sr_is_recordable(src) || sr_source_has_filter(src))
 		return true;
 	const char *nm = obs_source_get_name(src);
 	if (nm && *nm)
@@ -127,8 +141,7 @@ static bool sr_collect_sources(void *data, obs_source_t *src)
 	return true;
 }
 
-/* Add the filter to a source by name. Returns true if it was a video
- * source that didn't already have it. */
+/* Add the filter to a source by name. Returns true on success. */
 static bool sr_add_filter_to_source(const QString &name)
 {
 	if (name.isEmpty())
@@ -136,10 +149,7 @@ static bool sr_add_filter_to_source(const QString &name)
 	obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
 	if (!src)
 		return false;
-	uint32_t flags = obs_source_get_output_flags(src);
-	enum obs_source_type t = obs_source_get_type(src);
-	bool ok = (flags & OBS_SOURCE_VIDEO) && t != OBS_SOURCE_TYPE_FILTER &&
-		  t != OBS_SOURCE_TYPE_TRANSITION && !sr_source_has_filter(src);
+	bool ok = sr_is_recordable(src) && !sr_source_has_filter(src);
 	if (ok) {
 		obs_source_t *flt = obs_source_create_private("instant_record_filter", "Instant Record", nullptr);
 		if (flt) {
@@ -151,12 +161,27 @@ static bool sr_add_filter_to_source(const QString &name)
 	return ok;
 }
 
+/* Remove the Instant Record filter from a source by name. */
+static void sr_remove_filter_from_source(const QString &name)
+{
+	obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
+	if (!src)
+		return;
+	obs_source_t *flt = obs_source_get_filter_by_name(src, "Instant Record");
+	if (flt) {
+		obs_source_filter_remove(src, flt);
+		obs_source_release(flt);
+	}
+	obs_source_release(src);
+}
+
 struct Card {
 	QFrame *w;
 	QLabel *dot;
 	QLabel *status;
 	QLabel *time;
 	QPushButton *clip;
+	QString name;
 	int index;
 };
 
@@ -179,6 +204,8 @@ public:
 			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;}"
 			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;font-weight:800;}"
 			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
+			"QPushButton#del{background:transparent;border:none;color:#5a5f65;font-weight:800;padding:2px 6px;}"
+			"QPushButton#del:hover{color:" IR_RED ";}"
 			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}");
 
 		auto *root = new QVBoxLayout(this);
@@ -295,6 +322,16 @@ private:
 			int idx = i;
 			connect(clip, &QPushButton::clicked, clip, [idx] { sr_registry_save_index((size_t)idx); });
 
+			auto *del = new QPushButton(QStringLiteral("\xE2\x9C\x95")); /* ✕ */
+			del->setObjectName("del");
+			del->setToolTip(T("InstantRecord.Dock.Remove"));
+			QString srcName = QString::fromUtf8(rows[i].name);
+			connect(del, &QPushButton::clicked, del, [this, srcName] {
+				sr_remove_filter_from_source(srcName);
+				lastSig.clear(); /* force rebuild */
+				refresh();
+			});
+
 			cl->addWidget(dot);
 			cl->addWidget(nm);
 			cl->addStretch();
@@ -303,9 +340,10 @@ private:
 			cl->addWidget(tm);
 			cl->addSpacing(6);
 			cl->addWidget(clip);
+			cl->addWidget(del);
 
 			cardsBox->addWidget(card);
-			cards.push_back({card, dot, stt, tm, clip, i});
+			cards.push_back({card, dot, stt, tm, clip, QString::fromUtf8(rows[i].name), i});
 		}
 	}
 
