@@ -159,6 +159,85 @@ void sr_registry_save_index(size_t index)
 	pthread_mutex_unlock(&sr_registry_lock);
 }
 
+static obs_hotkey_id sr_hotkey_id(struct source_record_filter *f, int which)
+{
+	switch (which) {
+	case SR_HK_START:
+		return f->start_hotkey;
+	case SR_HK_STOP:
+		return f->stop_hotkey;
+	default:
+		return f->save_hotkey;
+	}
+}
+
+static void sr_bind_one(obs_hotkey_id id, uint32_t modifiers, int key)
+{
+	if (id == OBS_INVALID_HOTKEY_ID)
+		return;
+	if (key == 0) { /* clear the binding */
+		obs_hotkey_load_bindings(id, NULL, 0);
+		return;
+	}
+	obs_key_combination_t combo = {0};
+	combo.modifiers = modifiers;
+	combo.key = (obs_key_t)key;
+	obs_hotkey_load_bindings(id, &combo, 1);
+}
+
+void sr_registry_bind_hotkey(size_t index, int which, uint32_t modifiers, int key)
+{
+	pthread_mutex_lock(&sr_registry_lock);
+	if (index < sr_registry.num)
+		sr_bind_one(sr_hotkey_id(sr_registry.array[index], which), modifiers, key);
+	pthread_mutex_unlock(&sr_registry_lock);
+}
+
+void sr_registry_bind_hotkey_all(int which, uint32_t modifiers, int key)
+{
+	pthread_mutex_lock(&sr_registry_lock);
+	for (size_t i = 0; i < sr_registry.num; i++)
+		sr_bind_one(sr_hotkey_id(sr_registry.array[i], which), modifiers, key);
+	pthread_mutex_unlock(&sr_registry_lock);
+}
+
+struct sr_hk_find {
+	obs_hotkey_id id;
+	struct dstr *out;
+	bool found;
+};
+
+static bool sr_hk_enum(void *data, size_t idx, obs_hotkey_binding_t *binding)
+{
+	UNUSED_PARAMETER(idx);
+	struct sr_hk_find *find = data;
+	if (obs_hotkey_binding_get_hotkey_id(binding) == find->id) {
+		obs_key_combination_t c = obs_hotkey_binding_get_key_combination(binding);
+		obs_key_combination_to_str(c, find->out);
+		find->found = true;
+		return false; /* stop */
+	}
+	return true;
+}
+
+void sr_registry_hotkey_str(size_t index, int which, char *out, size_t outlen)
+{
+	if (outlen)
+		out[0] = '\0';
+	pthread_mutex_lock(&sr_registry_lock);
+	if (index < sr_registry.num) {
+		obs_hotkey_id id = sr_hotkey_id(sr_registry.array[index], which);
+		struct dstr s;
+		dstr_init(&s);
+		struct sr_hk_find find = {id, &s, false};
+		obs_enum_hotkey_bindings(sr_hk_enum, &find);
+		if (find.found && s.array)
+			snprintf(out, outlen, "%s", s.array);
+		dstr_free(&s);
+	}
+	pthread_mutex_unlock(&sr_registry_lock);
+}
+
 size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 {
 	size_t n = 0;
@@ -705,34 +784,31 @@ static void frontend_event(enum obs_frontend_event event, void *data)
 /* Hotkeys (SR_MODE_MANUAL)                                           */
 /* ================================================================== */
 
-static bool hotkey_start(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hk, bool pressed)
+static void hotkey_start(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hk);
 	struct source_record_filter *f = data;
 	if (!pressed)
-		return false;
+		return;
 	pthread_mutex_lock(&f->mutex);
 	if (!f->active)
 		f->want_start = true; /* gated start on next tick */
 	pthread_mutex_unlock(&f->mutex);
-	return true;
 }
 
-static bool hotkey_stop(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hk, bool pressed)
+static void hotkey_stop(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool pressed)
 {
 	UNUSED_PARAMETER(id);
 	UNUSED_PARAMETER(hk);
 	struct source_record_filter *f = data;
 	if (!pressed)
-		return false;
+		return;
 	pthread_mutex_lock(&f->mutex);
 	f->want_start = false;
-	bool was = f->active;
-	if (was)
+	if (f->active)
 		stop_file_output_locked(f);
 	pthread_mutex_unlock(&f->mutex);
-	return was;
 }
 
 /* ================================================================== */
@@ -785,15 +861,16 @@ static void *sr_create(obs_data_t *settings, obs_source_t *source)
 	struct source_record_filter *f = bzalloc(sizeof(struct source_record_filter));
 	f->source = source;
 	f->status = SR_STATUS_IDLE;
-	f->record_hotkey_pair = OBS_INVALID_HOTKEY_PAIR_ID;
+	f->start_hotkey = OBS_INVALID_HOTKEY_ID;
+	f->stop_hotkey = OBS_INVALID_HOTKEY_ID;
 	f->save_hotkey = OBS_INVALID_HOTKEY_ID;
 	pthread_mutex_init(&f->mutex, NULL);
 	sr_update(f, settings);
 
-	f->record_hotkey_pair = obs_hotkey_pair_register_source(
-		source, "InstantRecord.Start", obs_module_text("InstantRecord.Start"), "InstantRecord.Stop",
-		obs_module_text("InstantRecord.Stop"), hotkey_start, hotkey_stop, f, f);
-
+	f->start_hotkey = obs_hotkey_register_source(source, "InstantRecord.Start",
+						     obs_module_text("InstantRecord.Start"), hotkey_start, f);
+	f->stop_hotkey = obs_hotkey_register_source(source, "InstantRecord.Stop",
+						    obs_module_text("InstantRecord.Stop"), hotkey_stop, f);
 	f->save_hotkey = obs_hotkey_register_source(source, "InstantRecord.SaveReplay",
 						    obs_module_text("InstantRecord.SaveReplay"), sr_save_hotkey, f);
 
@@ -811,8 +888,10 @@ static void sr_destroy(void *data)
 #ifdef ENABLE_FRONTEND_API
 	obs_frontend_remove_event_callback(frontend_event, f);
 #endif
-	if (f->record_hotkey_pair != OBS_INVALID_HOTKEY_PAIR_ID)
-		obs_hotkey_pair_unregister(f->record_hotkey_pair);
+	if (f->start_hotkey != OBS_INVALID_HOTKEY_ID)
+		obs_hotkey_unregister(f->start_hotkey);
+	if (f->stop_hotkey != OBS_INVALID_HOTKEY_ID)
+		obs_hotkey_unregister(f->stop_hotkey);
 	if (f->save_hotkey != OBS_INVALID_HOTKEY_ID)
 		obs_hotkey_unregister(f->save_hotkey);
 

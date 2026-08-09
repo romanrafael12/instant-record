@@ -24,15 +24,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 
 #include <string>
+#include <vector>
+#include <functional>
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
-#include <QTableWidget>
-#include <QHeaderView>
-#include <QPushButton>
+#include <QFrame>
 #include <QLabel>
 #include <QPixmap>
+#include <QPushButton>
 #include <QTimer>
 #include <QDialog>
 #include <QLineEdit>
@@ -40,10 +41,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QFileDialog>
+#include <QKeyEvent>
+#include <QFocusEvent>
+#include <QGraphicsDropShadowEffect>
 
 /* Instant Replay brand palette. */
 #define IR_BG "#000000"
-#define IR_PANEL "#0c0c0d"
+#define IR_CARD "#0d0d0f"
 #define IR_RED "#e0403a"
 #define IR_GOLD "#f5c04a"
 #define IR_BLUE "#2f8fe0"
@@ -83,43 +87,110 @@ static void selectByData(QComboBox *c, const QVariant &v)
 		c->setCurrentIndex(i);
 }
 
+static uint32_t qtToObsMods(Qt::KeyboardModifiers m)
+{
+	uint32_t r = 0;
+	if (m & Qt::ShiftModifier)
+		r |= INTERACT_SHIFT_KEY;
+	if (m & Qt::ControlModifier)
+		r |= INTERACT_CONTROL_KEY;
+	if (m & Qt::AltModifier)
+		r |= INTERACT_ALT_KEY;
+	if (m & Qt::MetaModifier)
+		r |= INTERACT_COMMAND_KEY;
+	return r;
+}
+
+/* A button that captures the next key press and reports it as an OBS
+ * key + modifiers. No Q_OBJECT needed — it uses a std::function. */
+class HotkeyButton : public QPushButton {
+public:
+	std::function<void(uint32_t, int)> onCapture;
+	bool capturing = false;
+	explicit HotkeyButton(QWidget *p = nullptr) : QPushButton(p) { setFocusPolicy(Qt::StrongFocus); }
+	void startCapture()
+	{
+		capturing = true;
+		setText(QStringLiteral("…"));
+		setFocus();
+		grabKeyboard();
+	}
+
+protected:
+	void keyPressEvent(QKeyEvent *e) override
+	{
+		if (!capturing) {
+			QPushButton::keyPressEvent(e);
+			return;
+		}
+		int k = e->key();
+		if (k == Qt::Key_Shift || k == Qt::Key_Control || k == Qt::Key_Alt || k == Qt::Key_Meta ||
+		    k == Qt::Key_AltGr)
+			return; /* wait for a real key */
+		capturing = false;
+		releaseKeyboard();
+		if (k == Qt::Key_Escape) {
+			if (onCapture)
+				onCapture(0, 0); /* clear */
+			return;
+		}
+		int obskey = (int)obs_key_from_virtual_key((int)e->nativeVirtualKey());
+		if (onCapture)
+			onCapture(qtToObsMods(e->modifiers()), obskey);
+	}
+	void focusOutEvent(QFocusEvent *e) override
+	{
+		if (capturing) {
+			capturing = false;
+			releaseKeyboard();
+		}
+		QPushButton::focusOutEvent(e);
+	}
+};
+
+struct Card {
+	QFrame *w;
+	QLabel *dot;
+	QLabel *status;
+	QLabel *time;
+	QPushButton *clip;
+	int index;
+};
+
 class InstantRecordDock : public QWidget {
 public:
 	explicit InstantRecordDock(QWidget *parent = nullptr) : QWidget(parent)
 	{
 		setStyleSheet(
 			"QWidget{background:" IR_BG ";color:" IR_TEXT ";font-size:12px;}"
-			"QLabel#title{font-size:15px;font-weight:800;color:" IR_TEXT ";}"
+			"QLabel#title{font-size:15px;font-weight:800;}"
 			"QLabel#subtitle{font-size:10px;font-weight:600;color:" IR_GOLD ";}"
-			"QTableWidget{background:" IR_PANEL ";gridline-color:#1c1c1f;border:none;}"
-			"QHeaderView::section{background:" IR_BG ";color:" IR_MUTED
-			";border:none;padding:4px 8px;font-weight:700;}"
+			"QFrame#card{background:" IR_CARD ";border:1px solid #17171b;border-radius:12px;}"
 			"QPushButton{background:#161618;color:" IR_TEXT
-			";border:1px solid #2a2a2e;border-radius:16px;padding:8px 14px;font-weight:600;}"
+			";border:1px solid #2a2a2e;border-radius:14px;padding:8px 14px;font-weight:700;}"
 			"QPushButton:hover{border-color:" IR_GOLD ";}"
-			"QPushButton#start{background:" IR_RED ";border:none;font-weight:800;}"
-			"QPushButton#save{background:" IR_GOLD ";color:#1a1408;border:none;font-weight:800;}"
-			"QPushButton#clip{background:" IR_BLUE ";border:none;border-radius:12px;padding:3px 12px;}"
-			"QPushButton#clipbuf{background:" IR_GOLD ";color:#1a1408;border:none;border-radius:12px;padding:3px 12px;font-weight:800;}");
+			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0564f,stop:1 #c9322c);border:none;color:#fff;}"
+			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);border:none;color:#3a2a08;}"
+			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4aa6f0,stop:1 #2477c8);border:none;color:#fff;border-radius:13px;padding:5px 14px;}"
+			"QPushButton#hk{background:#141416;border:1px solid #26262b;border-radius:9px;padding:3px 8px;font-size:11px;font-weight:600;color:#c9d0d6;}"
+			"QPushButton#hk:hover{border-color:" IR_GOLD ";}");
 
 		auto *root = new QVBoxLayout(this);
 		root->setContentsMargins(10, 10, 10, 10);
+		root->setSpacing(8);
 
-		/* ---- Header: real logo + name / by Instant Replay ---- */
+		/* Header: logo + name + counters. */
 		auto *header = new QHBoxLayout();
 		auto *logo = new QLabel(this);
-		char *logoPath = obs_module_file("logo.png");
+		char *logoPath = obs_module_file("locale/logo.png");
 		QPixmap pix;
 		if (logoPath) {
 			pix.load(QString::fromUtf8(logoPath));
 			bfree(logoPath);
 		}
 		if (!pix.isNull())
-			logo->setPixmap(pix.scaled(28, 28, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-		else
-			logo->setText("●");
+			logo->setPixmap(pix.scaled(30, 30, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 		header->addWidget(logo);
-
 		auto *titleBox = new QVBoxLayout();
 		titleBox->setSpacing(0);
 		auto *title = new QLabel("Instant Record", this);
@@ -130,35 +201,26 @@ public:
 		titleBox->addWidget(subtitle);
 		header->addLayout(titleBox);
 		header->addStretch();
+		counters = new QLabel(this);
+		counters->setStyleSheet("font-size:11px;font-weight:700;");
+		header->addWidget(counters);
 		root->addLayout(header);
 
-		table = new QTableWidget(0, 4, this);
-		table->setHorizontalHeaderLabels(
-			{T("InstantRecord.Dock.Camera"), T("InstantRecord.Dock.Status"),
-			 T("InstantRecord.Dock.Time"), QString()});
-		auto *hh = table->horizontalHeader();
-		/* Pack columns left (no huge gap): camera/status/time snug, the
-		 * empty action column absorbs the remaining width. */
-		hh->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-		hh->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-		hh->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-		hh->setSectionResizeMode(3, QHeaderView::Stretch);
-		table->verticalHeader()->setVisible(false);
-		table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-		table->setSelectionMode(QAbstractItemView::NoSelection);
-		table->setShowGrid(false);
-		root->addWidget(table);
+		/* Scrollable-ish card container. */
+		cardsBox = new QVBoxLayout();
+		cardsBox->setSpacing(6);
+		root->addLayout(cardsBox);
+		root->addStretch();
 
-		summary = new QLabel(this);
-		summary->setStyleSheet("color:" IR_MUTED ";padding:2px;");
-		root->addWidget(summary);
-
+		/* Bottom action bar. */
 		auto *btns = new QHBoxLayout();
 		auto *startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
 		startAll->setObjectName("start");
+		shadow(startAll);
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
 		saveAll->setObjectName("save");
+		shadow(saveAll);
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
@@ -166,10 +228,6 @@ public:
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
-
-		auto *hint = new QLabel(T("InstantRecord.Dock.HotkeyHint"), this);
-		hint->setStyleSheet("color:#5a5f65;font-size:10px;padding:2px;");
-		root->addWidget(hint);
 
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
@@ -183,21 +241,110 @@ public:
 	}
 
 private:
-	QTableWidget *table;
-	QLabel *summary;
+	QVBoxLayout *cardsBox;
+	QLabel *counters;
+	std::vector<Card> cards;
+	QString lastSig;
+
+	static void shadow(QWidget *w)
+	{
+		auto *e = new QGraphicsDropShadowEffect(w);
+		e->setBlurRadius(12);
+		e->setOffset(0, 3);
+		e->setColor(QColor(0, 0, 0, 150));
+		w->setGraphicsEffect(e);
+	}
+
+	HotkeyButton *makeHk(const char *glyph, int camIndex, int which)
+	{
+		auto *b = new HotkeyButton();
+		b->setObjectName("hk");
+		QString g = QString::fromUtf8(glyph);
+		char cur[128];
+		sr_registry_hotkey_str((size_t)camIndex, which, cur, sizeof(cur));
+		b->setText(g + " " + (cur[0] ? QString::fromUtf8(cur) : QStringLiteral("—")));
+		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
+		b->onCapture = [b, camIndex, which, g](uint32_t mods, int key) {
+			sr_registry_bind_hotkey((size_t)camIndex, which, mods, key);
+			char cur2[128];
+			sr_registry_hotkey_str((size_t)camIndex, which, cur2, sizeof(cur2));
+			b->setText(g + " " + (cur2[0] ? QString::fromUtf8(cur2) : QStringLiteral("—")));
+		};
+		return b;
+	}
+
+	void rebuildCards(struct sr_status_row *rows, size_t n)
+	{
+		/* Clear old cards. */
+		for (auto &c : cards)
+			c.w->deleteLater();
+		cards.clear();
+		QLayoutItem *item;
+		while ((item = cardsBox->takeAt(0)) != nullptr)
+			delete item;
+
+		for (int i = 0; i < (int)n; i++) {
+			auto *card = new QFrame();
+			card->setObjectName("card");
+			auto *cl = new QVBoxLayout(card);
+			cl->setContentsMargins(10, 8, 10, 8);
+			cl->setSpacing(6);
+
+			auto *r1 = new QHBoxLayout();
+			auto *dot = new QLabel("●");
+			auto *nm = new QLabel(QString("%1\n%2x%3 · %4")
+						      .arg(rows[i].name)
+						      .arg(rows[i].width)
+						      .arg(rows[i].height)
+						      .arg(rows[i].format));
+			nm->setStyleSheet("font-weight:600;");
+			auto *stt = new QLabel();
+			stt->setStyleSheet("font-weight:800;");
+			auto *tm = new QLabel();
+			tm->setStyleSheet("color:#c9d0d6;");
+			r1->addWidget(dot);
+			r1->addWidget(nm);
+			r1->addStretch();
+			r1->addWidget(stt);
+			r1->addSpacing(8);
+			r1->addWidget(tm);
+			cl->addLayout(r1);
+
+			auto *r2 = new QHBoxLayout();
+			r2->addWidget(makeHk("\xE2\x96\xB6", i, SR_HK_START)); /* ▶ */
+			r2->addWidget(makeHk("\xE2\x96\xA0", i, SR_HK_STOP));  /* ■ */
+			r2->addWidget(makeHk("\xE2\x98\x85", i, SR_HK_SAVE));  /* ★ */
+			r2->addStretch();
+			auto *clip = new QPushButton(T("InstantRecord.Dock.Save"));
+			clip->setObjectName("clip");
+			int idx = i;
+			connect(clip, &QPushButton::clicked, clip, [idx] { sr_registry_save_index((size_t)idx); });
+			r2->addWidget(clip);
+			cl->addLayout(r2);
+
+			cardsBox->addWidget(card);
+			Card c{card, dot, stt, tm, clip, i};
+			cards.push_back(c);
+		}
+	}
 
 	void refresh()
 	{
 		struct sr_status_row rows[64];
 		size_t n = sr_registry_snapshot(rows, 64);
 
-		table->setRowCount((int)n);
-		int rec = 0, idle = 0, err = 0;
-		for (int i = 0; i < (int)n; i++) {
-			QString detail = QString::asprintf("%ux%u · %s", rows[i].width, rows[i].height,
-							   rows[i].format);
-			auto *name = new QTableWidgetItem(QString("%1\n%2").arg(rows[i].name, detail));
+		/* Signature: rebuild cards only when the camera set changes. */
+		QString sig = QString::number(n);
+		for (size_t i = 0; i < n; i++)
+			sig += "|" + QString::fromUtf8(rows[i].name);
+		if (sig != lastSig) {
+			rebuildCards(rows, n);
+			lastSig = sig;
+		}
 
+		int rec = 0, buf = 0, idle = 0, err = 0;
+		for (int i = 0; i < (int)n && i < (int)cards.size(); i++) {
+			Card &c = cards[i];
 			QString st;
 			QColor col;
 			bool buffering = false;
@@ -207,11 +354,12 @@ private:
 					st = QStringLiteral("● BUF");
 					col = QColor(IR_GOLD);
 					buffering = true;
+					buf++;
 				} else {
 					st = T("InstantRecord.Dock.Rec");
 					col = QColor(IR_RED);
+					rec++;
 				}
-				rec++;
 				break;
 			case SR_STATUS_ERROR:
 				st = T("InstantRecord.Dock.Error");
@@ -224,28 +372,33 @@ private:
 				idle++;
 				break;
 			}
-			auto *status = new QTableWidgetItem(st);
-			status->setForeground(col);
-			auto *time = new QTableWidgetItem(format_elapsed(rows[i].elapsed_ns));
-
-			table->setItem(i, 0, name);
-			table->setItem(i, 1, status);
-			table->setItem(i, 2, time);
-
-			if (rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING) {
-				auto *btn = new QPushButton(T("InstantRecord.Dock.Save"));
-				btn->setObjectName(buffering ? "clipbuf" : "clip");
-				int idx = i;
-				connect(btn, &QPushButton::clicked, this,
-					[idx] { sr_registry_save_index((size_t)idx); });
-				table->setCellWidget(i, 3, btn);
-			} else {
-				table->removeCellWidget(i, 3);
-				table->setItem(i, 3, new QTableWidgetItem(QString()));
-			}
+			c.dot->setStyleSheet(QString("color:%1;").arg(col.name()));
+			c.status->setText(st);
+			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(col.name()));
+			c.time->setText(format_elapsed(rows[i].elapsed_ns));
+			bool showClip = rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING;
+			c.clip->setVisible(showClip);
+			(void)buffering;
 		}
-		table->resizeRowsToContents();
-		summary->setText(T("InstantRecord.Dock.Summary").arg(rec).arg(idle).arg(err));
+		counters->setText(QString("<span style='color:" IR_RED "'>%1 REC</span>  "
+					  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
+					  "<span style='color:" IR_MUTED "'>%3 idle</span>")
+					  .arg(rec)
+					  .arg(buf)
+					  .arg(idle));
+	}
+
+	HotkeyButton *makeHkAll(const QString &label, int which)
+	{
+		auto *b = new HotkeyButton();
+		b->setObjectName("hk");
+		b->setText(label);
+		connect(b, &QPushButton::clicked, b, [b] { b->startCapture(); });
+		b->onCapture = [b, which, label](uint32_t mods, int key) {
+			sr_registry_bind_hotkey_all(which, mods, key);
+			b->setText(label + " \xE2\x9C\x93"); /* ✓ */
+		};
+		return b;
 	}
 
 	void openGlobalConfig()
@@ -254,8 +407,9 @@ private:
 		dlg.setStyleSheet("QDialog{background:" IR_BG ";color:" IR_TEXT ";}"
 				  "QLabel{color:" IR_TEXT ";}"
 				  "QPushButton{background:#161618;color:" IR_TEXT
-				  ";border:1px solid #2a2a2e;border-radius:16px;padding:7px 14px;}"
-				  "QPushButton#apply{background:" IR_GOLD ";color:#1a1408;border:none;font-weight:800;}");
+				  ";border:1px solid #2a2a2e;border-radius:14px;padding:7px 14px;}"
+				  "QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffd27a,stop:1 #e9a92f);color:#3a2a08;border:none;font-weight:800;}"
+				  "QPushButton#hk{background:#141416;border:1px solid #26262b;border-radius:9px;padding:4px 10px;}");
 		dlg.setWindowTitle(T("InstantRecord.Global.Title"));
 		auto *grid = new QGridLayout(&dlg);
 		int r = 0;
@@ -330,6 +484,15 @@ private:
 
 		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
 		grid->addWidget(isolate, r++, 1);
+
+		/* Global hotkeys — bind the same key to every camera at once. */
+		grid->addWidget(new QLabel(T("InstantRecord.Global.Hotkeys")), r, 0);
+		auto *hkRow = new QHBoxLayout();
+		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkStart"), SR_HK_START));
+		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkStop"), SR_HK_STOP));
+		hkRow->addWidget(makeHkAll(T("InstantRecord.Global.HkSave"), SR_HK_SAVE));
+		hkRow->addStretch();
+		grid->addLayout(hkRow, r++, 1, 1, 2);
 
 		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
 		if (saved) {

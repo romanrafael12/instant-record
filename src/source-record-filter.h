@@ -98,8 +98,9 @@ struct source_record_filter {
 	int last_error_code; /* last obs_output stop code                 */
 	int file_index;      /* monotonic per-filter, unique filenames    */
 
-	/* Hotkeys. */
-	obs_hotkey_pair_id record_hotkey_pair;
+	/* Hotkeys (three separate ids so each can be rebound from the UI). */
+	obs_hotkey_id start_hotkey;
+	obs_hotkey_id stop_hotkey;
 	obs_hotkey_id save_hotkey; /* save a replay clip (buffer mode)  */
 
 	/* Roadmap: manifest.json entry for ISO multicam sync. */
@@ -139,6 +140,18 @@ size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows);
 
 /* Save a clip from a single camera by its snapshot index. */
 void sr_registry_save_index(size_t index);
+
+/* Per-camera hotkeys the dock can rebind. */
+enum sr_hotkey_kind { SR_HK_START = 0, SR_HK_STOP = 1, SR_HK_SAVE = 2 };
+
+/* Bind (or clear, when key == 0) one camera's hotkey, or all cameras'.
+ * `modifiers` is a mask of obs_interaction_flags; `key` is an obs_key. */
+void sr_registry_bind_hotkey(size_t index, int which, uint32_t modifiers, int key);
+void sr_registry_bind_hotkey_all(int which, uint32_t modifiers, int key);
+
+/* Human-readable current binding for a camera's hotkey (e.g. "Ctrl+1"),
+ * empty if unbound. Writes into out (size outlen). */
+void sr_registry_hotkey_str(size_t index, int which, char *out, size_t outlen);
 
 /* Apply shared settings to every recorder at once. A NULL string or a
  * negative number means "leave that field unchanged" — so the dock can
