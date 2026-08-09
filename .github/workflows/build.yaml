@@ -1,0 +1,44 @@
+name: Build Windows
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Build for Windows x64
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure (Qt + frontend ON)
+        run: >
+          cmake --preset windows-x64
+          -DENABLE_QT=ON
+          -DENABLE_FRONTEND_API=ON
+
+      - name: Build
+        run: cmake --build --preset windows-x64
+
+      - name: Assemble plugin
+        run: >
+          cmake --install build_x64
+          --prefix "${{ github.workspace }}/release"
+          --config RelWithDebInfo
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-windows-x64
+          path: release/**
+          if-no-files-found: warn
+
+      - name: Upload raw build (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-build-raw
+          path: |
+            build_x64/**/*.dll
+            build_x64/**/*.pdb
+          if-no-files-found: ignore
