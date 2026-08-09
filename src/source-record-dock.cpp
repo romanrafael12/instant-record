@@ -185,6 +185,7 @@ struct Card {
 	QLabel *status;
 	QLabel *time;
 	QPushButton *clip;
+	QPushButton *del;
 	QString name;
 	int index;
 };
@@ -207,6 +208,8 @@ public:
 			"QPushButton#start{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef4a44,stop:1 #cc302b);border:none;color:#fff;}"
 			"QPushButton#save{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f7c04a,stop:1 #e9a41f);border:none;color:#3a2a08;}"
 			"QPushButton#add{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7b5cf0,stop:1 #5f3fd0);border:none;color:#fff;}"
+			"QPushButton#addtop{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7b5cf0,stop:1 #5f3fd0);border:none;color:#fff;border-radius:14px;font-size:16px;font-weight:800;padding:0;}"
+			"QPushButton#addtop:hover{background:#8b6cff;}"
 			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f7c04a,stop:1 #e9a41f);border:none;color:#3a2a08;font-weight:800;}"
 			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
 			"QPushButton#del{background:transparent;border:none;color:#5a5f65;font-weight:800;padding:2px 6px;}"
@@ -242,14 +245,19 @@ public:
 		counters = new QLabel(this);
 		counters->setStyleSheet("font-size:11px;font-weight:700;");
 		header->addWidget(counters);
+		auto *addTop = new QPushButton(QStringLiteral("\xEF\xBC\x8B"), this); /* ＋ */
+		addTop->setObjectName("addtop");
+		addTop->setToolTip(T("InstantRecord.Dock.AddCams"));
+		addTop->setFixedSize(28, 28);
+		header->addSpacing(8);
+		header->addWidget(addTop);
 		root->addLayout(header);
 
 		cardsBox = new QVBoxLayout();
 		cardsBox->setSpacing(6);
 		root->addLayout(cardsBox);
 
-		/* Empty-state hint (OBS doesn't allow dragging sources into a
-		 * plugin dock, so we point users at the Add cameras button). */
+		/* Empty-state hint. */
 		emptyHint = new QLabel(T("InstantRecord.Dock.EmptyHint"), this);
 		emptyHint->setObjectName("drop");
 		emptyHint->setAlignment(Qt::AlignCenter);
@@ -260,26 +268,23 @@ public:
 
 		/* Bottom action bar. */
 		auto *btns = new QHBoxLayout();
-		auto *startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
+		startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
 		startAll->setObjectName("start");
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
-		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveAll"), this);
+		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveBuffer"), this);
 		saveAll->setObjectName("save");
-		auto *addCams = new QPushButton(T("InstantRecord.Dock.AddCams"), this);
-		addCams->setObjectName("add");
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
 		btns->addStretch();
-		btns->addWidget(addCams);
 		btns->addWidget(config);
 		root->addLayout(btns);
 
+		connect(addTop, &QPushButton::clicked, this, [this] { pickAndAddCameras(); });
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
 		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
-		connect(addCams, &QPushButton::clicked, this, [this] { pickAndAddCameras(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
 
 		auto *timer = new QTimer(this);
@@ -292,6 +297,7 @@ private:
 	QVBoxLayout *cardsBox;
 	QLabel *counters;
 	QLabel *emptyHint;
+	QPushButton *startAll;
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
@@ -334,26 +340,6 @@ private:
 			del->setToolTip(T("InstantRecord.Dock.Remove"));
 			QString srcName = QString::fromUtf8(rows[i].name);
 			connect(del, &QPushButton::clicked, del, [this, srcName] {
-				/* If this camera is actively recording/buffering,
-				 * confirm before pulling the filter mid-take. */
-				struct sr_status_row now[64];
-				size_t cnt = sr_registry_snapshot(now, 64);
-				bool active = false;
-				for (size_t j = 0; j < cnt; j++) {
-					if (srcName == QString::fromUtf8(now[j].name) &&
-					    now[j].status == SR_STATUS_RECORDING) {
-						active = true;
-						break;
-					}
-				}
-				if (active) {
-					auto res = QMessageBox::warning(this, T("InstantRecord.Dock.Remove"),
-									T("InstantRecord.Remove.Confirm"),
-									QMessageBox::Yes | QMessageBox::No,
-									QMessageBox::No);
-					if (res != QMessageBox::Yes)
-						return;
-				}
 				sr_remove_filter_from_source(srcName);
 				lastSig.clear(); /* force rebuild */
 				refresh();
@@ -370,7 +356,7 @@ private:
 			cl->addWidget(del);
 
 			cardsBox->addWidget(card);
-			cards.push_back({card, dot, nm, stt, tm, clip, QString::fromUtf8(rows[i].name), i});
+			cards.push_back({card, dot, nm, stt, tm, clip, del, QString::fromUtf8(rows[i].name), i});
 		}
 	}
 
@@ -426,20 +412,23 @@ private:
 						.arg(rows[i].width)
 						.arg(rows[i].height)
 						.arg(rows[i].format));
-			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(colName));
+			/* Blink ONLY the dot while active (no card border). */
+			QString dotCol = (active && !blinkOn) ? "#44444a" : colName;
+			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(dotCol));
 			c.status->setText(st);
 			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
 			c.time->setText(format_elapsed(rows[i].elapsed_ns));
 			c.clip->setVisible(rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING);
-			/* Pulse the whole card border while active so recording is
-			 * unmistakable at a glance. */
-			QString border = active ? (blinkOn ? colName : "#2a2a30") : "#242428";
-			int bw = active ? 2 : 1;
-			c.w->setStyleSheet(QString("QFrame#card{background:" IR_CARD
-						   ";border:%1px solid %2;border-radius:12px;}")
-						   .arg(bw)
-						   .arg(border));
+			/* Block removal while this camera is recording/buffering. */
+			c.del->setEnabled(!active);
+			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
 		}
+		/* Start all turns green while any camera is recording, so it's
+		 * obvious the rig is live. */
+		bool anyLive = (rec + buf) > 0;
+		startAll->setStyleSheet(
+			anyLive ? "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4ade80,stop:1 #22a35a);border:none;color:#08210f;font-weight:800;"
+				: "");
 		counters->setText(QString("<span style='color:" IR_RED "'>%1 REC</span>  "
 					  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
 					  "<span style='color:" IR_GREEN "'>%3 ready</span>")
