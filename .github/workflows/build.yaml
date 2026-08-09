@@ -9,18 +9,37 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Detect latest Windows SDK
+        id: sdk
+        shell: pwsh
+        run: |
+          $roots = @(
+            "${env:ProgramFiles(x86)}\Windows Kits\10\include",
+            "${env:ProgramFiles}\Windows Kits\10\include"
+          )
+          $versions = foreach ($root in $roots) {
+            if (Test-Path $root) {
+              Get-ChildItem -Path $root -Directory |
+                Where-Object { Test-Path (Join-Path $_.FullName 'um') } |
+                ForEach-Object { $_.Name }
+            }
+          }
+          $latest = $versions | Sort-Object { [version]$_ } | Select-Object -Last 1
+          if (-not $latest) { Write-Error "No Windows SDK found"; exit 1 }
+          Write-Host "Using Windows SDK $latest"
+          "version=$latest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          sdk: "10.0.22621.0"
+          sdk: ${{ steps.sdk.outputs.version }}
       - name: Configure (Qt + frontend ON)
         run: >
           cmake -S . -B build_x64 -G Ninja
           -DENABLE_QT=ON
           -DENABLE_FRONTEND_API=ON
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DCMAKE_SYSTEM_VERSION=10.0.22621.0
+          -DCMAKE_SYSTEM_VERSION=${{ steps.sdk.outputs.version }}
       - name: Build
         run: cmake --build build_x64
       - name: Assemble plugin
