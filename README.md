@@ -35,6 +35,16 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
   <img width="276" height="55" alt="Config bar" src="https://github.com/user-attachments/assets/2ee87cf9-8077-499a-a0f0-f21c06ae1e82"/>
 </p>
 
+Video Tutorial:
+
+
+https://github.com/user-attachments/assets/c88f3c3e-6ecc-4f2d-9ca3-9b81aac5a1ea
+
+
+
+
+
+
 ## Install (Windows)
 
 1. Download the latest **`InstantRecord-Setup.exe`** from the [Releases page](https://github.com/romanrafael12/instant-record/releases/latest), or build it yourself from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab.
