@@ -10,22 +10,14 @@ Instant Record records **each camera to its own file** and keeps a **per-camera 
 
 ## ⬇ Download
 
-<a href="https://github.com/romanrafael12/instant-record/releases/latest">
-  <img src="https://img.shields.io/badge/Download-on%20GitHub-e0403a?style=for-the-badge&logo=github&logoColor=white" alt="Download on GitHub"/>
+<a href="https://github.com/romanrafael12/instant-record/releases/latest/download/InstantRecord-Setup.exe">
+  <img src="https://img.shields.io/badge/Download-Windows%20Installer-e0403a?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows Installer"/>
 </a>
 
 [![Latest release](https://img.shields.io/github/v/release/romanrafael12/instant-record?label=version&color=f5c04a&style=flat-square)](https://github.com/romanrafael12/instant-record/releases/latest)
 
-Get the installer or the manual zip from GitHub Releases.  
-Other versions are on the **[Releases page](https://github.com/romanrafael12/instant-record/releases/latest)**.
-
-### ☕ Support the project
-
-If Instant Record saves you time, you can [**buy me a coffee**](https://donate.stripe.com/28EaEW1Dk19c8uB5Kk7wA00) — it's free and open source, and every bit helps.
-
-<a href="https://donate.stripe.com/28EaEW1Dk19c8uB5Kk7wA00">
-  <img src="https://img.shields.io/badge/%E2%98%95%20Buy%20me%20a%20coffee-f5c04a?style=for-the-badge&logoColor=black" alt="Buy me a coffee"/>
-</a>
+Downloads the installer directly — run it and it sets up the plugin in OBS for you.  
+Other versions and the manual zip are on the **[Releases page](https://github.com/romanrafael12/instant-record/releases/latest)**.
 
 </div>
 
@@ -72,6 +64,16 @@ Instant Record registers an **obs-websocket** vendor (`instant-record`) so an ap
 ## Support
 
 Questions, bugs, or feature requests → open an [issue on GitHub](https://github.com/romanrafael12/instant-record/issues).
+
+## ☕ Support the project
+
+Instant Record is free and open source. If it saves you time, you can [**buy me a coffee**](https://donate.stripe.com/28EaEW1Dk19c8uB5Kk7wA00) — every bit helps.
+
+<p align="center">
+  <a href="https://donate.stripe.com/28EaEW1Dk19c8uB5Kk7wA00">
+    <img src="https://img.shields.io/badge/%E2%98%95%20Buy%20me%20a%20coffee-f5c04a?style=for-the-badge&logoColor=black" alt="Buy me a coffee"/>
+  </a>
+</p>
 
 ## License
 
