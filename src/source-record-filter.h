@@ -174,6 +174,9 @@ struct sr_global_config {
 };
 void sr_registry_apply_config(const struct sr_global_config *cfg);
 
+/* Enable/disable the per-clip .json sidecar files (1 = on, default). */
+void sr_set_sidecar_enabled(int on);
+
 /* Registers the Qt status dock with the OBS frontend. Implemented in
  * source-record-dock.cpp; no-op if built without Qt/frontend. */
 void instant_record_register_dock(void);

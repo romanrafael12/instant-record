@@ -520,8 +520,19 @@ static void build_output_filepath(struct source_record_filter *f, struct dstr *o
 /* start staggered.                                                    */
 /* ================================================================== */
 
+/* When false, no per-clip .json sidecar is written (user preference in
+ * the dock's Config dialog). Defaults to on. */
+static bool g_sidecar_enabled = true;
+
+void sr_set_sidecar_enabled(int on)
+{
+	g_sidecar_enabled = on ? true : false;
+}
+
 static void write_sidecar(struct source_record_filter *f, bool final, int64_t stop_ns)
 {
+	if (!g_sidecar_enabled)
+		return;
 	if (!f->current_filepath)
 		return;
 	obs_source_t *parent = obs_filter_get_parent(f->source);

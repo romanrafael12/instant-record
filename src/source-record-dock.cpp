@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <util/platform.h>
 #include "source-record-filter.h"
+#include "clean-program.h"
 
 #ifdef ENABLE_FRONTEND_API
 #include <obs-frontend-api.h>
@@ -406,6 +407,40 @@ public:
 		header->addWidget(addTop);
 		root->addLayout(header);
 
+		/* Clean Program live card — hidden until a clean-program
+		 * recording is running. Shows elapsed time, the camera being
+		 * followed right now, and a Stop button. */
+		cleanCard = new QFrame(this);
+		cleanCard->setObjectName("cleancard");
+		cleanCard->setStyleSheet("QFrame#cleancard{background:" IR_CARD
+					 ";border:2px solid " IR_BLUE ";border-radius:12px;}");
+		{
+			auto *cc = new QVBoxLayout(cleanCard);
+			cc->setContentsMargins(10, 8, 10, 10);
+			cc->setSpacing(6);
+			auto *top = new QHBoxLayout();
+			auto *ttl = new QLabel(QStringLiteral("\xE2\x97\x8F ") + T("InstantRecord.Clean.Title"),
+					       cleanCard);
+			ttl->setStyleSheet(QString("color:%1;font-weight:800;font-size:12px;").arg(IR_RED));
+			cleanTime = new QLabel(QStringLiteral("00:00:00"), cleanCard);
+			cleanTime->setStyleSheet("color:" IR_TEXT ";font-weight:700;");
+			top->addWidget(ttl);
+			top->addStretch();
+			top->addWidget(cleanTime);
+			cc->addLayout(top);
+			cleanCam = new QLabel(cleanCard);
+			cleanCam->setStyleSheet("color:#9aa0a6;font-size:11px;");
+			cc->addWidget(cleanCam);
+			auto *stopClean = new QPushButton(T("InstantRecord.Clean.Stop"), cleanCard);
+			stopClean->setStyleSheet("QPushButton{background:#1a1a1e;color:" IR_RED
+						 ";border:1px solid #3a2326;border-radius:10px;padding:5px 0;font-weight:700;}"
+						 "QPushButton:hover{background:#241a1c;}");
+			connect(stopClean, &QPushButton::clicked, this, [] { clean_program_stop(); });
+			cc->addWidget(stopClean);
+		}
+		cleanCard->setVisible(false);
+		root->addWidget(cleanCard);
+
 		/* Scrollable, width-adaptive grid of camera cards. Lives in a
 		 * scroll area so many cameras never push the header or the
 		 * bottom bar off-screen. */
@@ -438,12 +473,17 @@ public:
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveBuffer"), this);
 		saveAll->setObjectName("save");
 		auto *config = new QPushButton(T("InstantRecord.Dock.Config"), this);
+		cleanBtn = new QPushButton(T("InstantRecord.Clean.Start"), this);
+		cleanBtn->setObjectName("cleanbtn");
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
+		btns->addWidget(cleanBtn);
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
+
+		connect(cleanBtn, &QPushButton::clicked, this, [] { clean_program_toggle(); });
 
 		connect(addTop, &QPushButton::clicked, this, [this] { pickAndAddCameras(); });
 		connect(startAll, &QPushButton::clicked, this, [] { sr_registry_start_all(); });
@@ -455,6 +495,16 @@ public:
 		connect(timer, &QTimer::timeout, this, [this] { refresh(); });
 		timer->start(500);
 		refresh();
+
+		/* Apply the saved sidecar preference at startup. */
+		{
+			obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
+			if (saved) {
+				if (obs_data_has_user_value(saved, "sidecar"))
+					sr_set_sidecar_enabled(obs_data_get_bool(saved, "sidecar") ? 1 : 0);
+				obs_data_release(saved);
+			}
+		}
 	}
 
 private:
@@ -462,6 +512,10 @@ private:
 	QLabel *counters;
 	QLabel *emptyHint;
 	QPushButton *startAll;
+	QFrame *cleanCard;
+	QLabel *cleanTime;
+	QLabel *cleanCam;
+	QPushButton *cleanBtn;
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
@@ -550,6 +604,10 @@ private:
 		}
 
 		int rec = 0, buf = 0, idle = 0, err = 0;
+		bool cleanActive = clean_program_active();
+		char cleanCamBuf[256] = {0};
+		clean_program_current_cam(cleanCamBuf, sizeof(cleanCamBuf));
+		QString cleanCamName = QString::fromUtf8(cleanCamBuf);
 		for (int i = 0; i < (int)n && i < (int)cards.size(); i++) {
 			Card &c = cards[i];
 			QString st;
@@ -597,6 +655,11 @@ private:
 			/* Block removal while this camera is recording/buffering. */
 			c.del->setEnabled(!active);
 			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
+			/* Highlight the camera the clean program is on-air with. */
+			bool onAir = cleanActive && c.name == cleanCamName;
+			c.w->setStyleSheet(onAir ? "QFrame{background:" IR_CARD ";border:2px solid " IR_BLUE
+						   ";border-radius:12px;}"
+						 : "");
 		}
 		/* Start all turns green while any camera is recording, so it's
 		 * obvious the rig is live. */
@@ -610,6 +673,21 @@ private:
 					  .arg(rec)
 					  .arg(buf)
 					  .arg(idle));
+
+		cleanCard->setVisible(cleanActive);
+		cleanBtn->setText(cleanActive ? T("InstantRecord.Clean.Stop") : T("InstantRecord.Clean.Start"));
+		cleanBtn->setStyleSheet(
+			cleanActive
+				? "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ef4a44,stop:1 #cc302b);border:none;color:#fff;font-weight:800;"
+				: "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;font-weight:800;");
+		if (cleanActive) {
+			long long cs = clean_program_elapsed_s();
+			cleanTime->setText(
+				QString::asprintf("%02lld:%02lld:%02lld", cs / 3600, (cs % 3600) / 60, cs % 60));
+			cleanCam->setText(cleanCamName.isEmpty()
+						  ? T("InstantRecord.Clean.NoCam")
+						  : T("InstantRecord.Clean.Now") + QStringLiteral(" ") + cleanCamName);
+		}
 	}
 
 	void pickAndAddCameras()
@@ -810,6 +888,30 @@ private:
 		auto *isolate = new QCheckBox(T("InstantRecord.Global.IsolateAudio"), &dlg);
 		grid->addWidget(isolate, r++, 1);
 
+		/* --- Clean Program settings --- */
+		grid->addWidget(new QLabel(T("InstantRecord.Clean.Folder")), r, 0);
+		auto *cleanPath = new QLineEdit(&dlg);
+		auto *cleanBrowse = new QPushButton(T("InstantRecord.Global.Browse"), &dlg);
+		connect(cleanBrowse, &QPushButton::clicked, &dlg, [&] {
+			QString d = QFileDialog::getExistingDirectory(&dlg);
+			if (!d.isEmpty())
+				cleanPath->setText(d);
+		});
+		grid->addWidget(cleanPath, r, 1);
+		grid->addWidget(cleanBrowse, r++, 2);
+
+		grid->addWidget(new QLabel(T("InstantRecord.Clean.Format")), r, 0);
+		auto *cleanFmt = new QComboBox(&dlg);
+		cleanFmt->addItem(T("InstantRecord.Format.Hybrid"), "hybrid_mp4");
+		cleanFmt->addItem("mp4", "mp4");
+		cleanFmt->addItem("mkv", "mkv");
+		cleanFmt->addItem("mov", "mov");
+		grid->addWidget(cleanFmt, r++, 1);
+
+		auto *sidecar = new QCheckBox(T("InstantRecord.Global.Sidecar"), &dlg);
+		sidecar->setChecked(true);
+		grid->addWidget(sidecar, r++, 1);
+
 		obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
 		if (saved) {
 			pathEdit->setText(QString::fromUtf8(obs_data_get_string(saved, "path")));
@@ -824,6 +926,11 @@ private:
 			if (obs_data_get_int(saved, "buffer_seconds") > 0)
 				bufSecs->setValue((int)obs_data_get_int(saved, "buffer_seconds"));
 			isolate->setChecked(obs_data_get_bool(saved, "isolate"));
+			cleanPath->setText(QString::fromUtf8(obs_data_get_string(saved, "clean_path")));
+			if (obs_data_has_user_value(saved, "clean_container"))
+				selectByData(cleanFmt, QString(obs_data_get_string(saved, "clean_container")));
+			if (obs_data_has_user_value(saved, "sidecar"))
+				sidecar->setChecked(obs_data_get_bool(saved, "sidecar"));
 			obs_data_release(saved);
 		}
 
@@ -882,6 +989,11 @@ private:
 			obs_data_set_bool(d, "use_buffer", buffer->isChecked());
 			obs_data_set_int(d, "buffer_seconds", bufSecs->value());
 			obs_data_set_bool(d, "isolate", isolate->isChecked());
+			obs_data_set_string(d, "clean_path", cleanPath->text().toUtf8().constData());
+			obs_data_set_string(d, "clean_container",
+					    cleanFmt->currentData().toString().toUtf8().constData());
+			obs_data_set_bool(d, "sidecar", sidecar->isChecked());
+			sr_set_sidecar_enabled(sidecar->isChecked() ? 1 : 0);
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
 			obs_data_release(d);
 

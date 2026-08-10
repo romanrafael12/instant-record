@@ -64,6 +64,9 @@ struct clean_program {
 	/* The camera the view is currently following (weak ref just for
 	 * comparison/logging; the view holds the real reference). */
 	obs_source_t *current_cam;
+
+	int64_t start_unix;        /* when recording began (for the dock timer) */
+	char current_cam_name[256]; /* name of the followed camera (for the dock) */
 };
 
 static struct clean_program g = {0};
@@ -142,16 +145,61 @@ static void follow_current_scene_locked(void)
 
 	obs_view_set_source(g.view, 0, cam);
 	g.current_cam = cam; /* view now holds the strong ref */
-	obs_log(LOG_INFO, "[instant-record] clean program → following '%s'", obs_source_get_name(cam));
+	const char *nm = obs_source_get_name(cam);
+	snprintf(g.current_cam_name, sizeof(g.current_cam_name), "%s", nm ? nm : "");
+	obs_log(LOG_INFO, "[instant-record] clean program → following '%s'", nm ? nm : "");
 	obs_source_release(cam); /* our probe ref; the view keeps its own */
 }
 
 /* ---- build / tear down the recording chain ---------------------------- */
 
-static char *build_output_path(void)
+/* Reads the clean-program container + folder the user set in the dock's
+ * Config dialog (stored in global.json). Falls back to Hybrid MP4 and the
+ * OBS recording folder. Caller bfree()s *folder and *container. */
+static void read_clean_cfg(char **folder, char **container)
 {
-	char *dir = obs_frontend_get_current_record_output_path();
-	const char *base = (dir && *dir) ? dir : ".";
+	*folder = NULL;
+	*container = NULL;
+	char *cfgpath = obs_module_get_config_path(obs_current_module(), "global.json");
+	if (cfgpath) {
+		obs_data_t *d = obs_data_create_from_json_file(cfgpath);
+		bfree(cfgpath);
+		if (d) {
+			const char *f = obs_data_get_string(d, "clean_path");
+			const char *c = obs_data_get_string(d, "clean_container");
+			if (f && *f)
+				*folder = bstrdup(f);
+			if (c && *c)
+				*container = bstrdup(c);
+			obs_data_release(d);
+		}
+	}
+	if (!*container)
+		*container = bstrdup("hybrid_mp4"); /* default */
+}
+
+/* Container id -> file extension. */
+static const char *clean_ext(const char *container)
+{
+	if (!container)
+		return "mp4";
+	if (strcmp(container, "mkv") == 0)
+		return "mkv";
+	if (strcmp(container, "mov") == 0)
+		return "mov";
+	return "mp4"; /* mp4 and hybrid_mp4 both write .mp4 */
+}
+
+static char *build_output_path(const char *folder, const char *container)
+{
+	char *recdir = NULL;
+	const char *base;
+	if (folder && *folder) {
+		base = folder;
+	} else {
+		recdir = obs_frontend_get_current_record_output_path();
+		base = (recdir && *recdir) ? recdir : ".";
+	}
 
 	char stamp[64];
 	time_t t = time(NULL);
@@ -163,13 +211,12 @@ static char *build_output_path(void)
 #endif
 	strftime(stamp, sizeof(stamp), "%Y-%m-%d_%H-%M-%S", &lt);
 
-	size_t need = strlen(base) + 64;
+	const char *ext = clean_ext(container);
+	size_t need = strlen(base) + 96;
 	char *path = bmalloc(need);
-	/* .mkv survives a crash and never needs a moov-atom finalize, so a
-	 * long program recording is safe even if OBS dies mid-record. */
-	snprintf(path, need, "%s/CleanProgram_%s.mkv", base, stamp);
+	snprintf(path, need, "%s/CleanProgram_%s.%s", base, stamp, ext);
 
-	bfree(dir);
+	bfree(recdir);
 	return path;
 }
 
@@ -206,6 +253,7 @@ static void teardown_chain_locked(void)
 		g.video_output = NULL;
 	}
 	g.current_cam = NULL;
+	g.current_cam_name[0] = '\0';
 	g.active = false;
 }
 
@@ -217,6 +265,23 @@ bool clean_program_active(void)
 	bool a = g.active;
 	pthread_mutex_unlock(&g.mutex);
 	return a;
+}
+
+long long clean_program_elapsed_s(void)
+{
+	pthread_mutex_lock(&g.mutex);
+	long long e = g.active ? (long long)(time(NULL) - g.start_unix) : 0;
+	pthread_mutex_unlock(&g.mutex);
+	return e < 0 ? 0 : e;
+}
+
+void clean_program_current_cam(char *buf, unsigned long buflen)
+{
+	if (!buf || buflen == 0)
+		return;
+	pthread_mutex_lock(&g.mutex);
+	snprintf(buf, buflen, "%s", g.active ? g.current_cam_name : "");
+	pthread_mutex_unlock(&g.mutex);
 }
 
 bool clean_program_start(void)
@@ -275,11 +340,27 @@ bool clean_program_start(void)
 	g.aenc = obs_audio_encoder_create("ffmpeg_aac", "instant_record_clean_aenc", NULL, 0, NULL);
 	obs_encoder_set_audio(g.aenc, obs_get_audio());
 
-	char *path = build_output_path();
+	char *cfg_folder = NULL, *cfg_container = NULL;
+	read_clean_cfg(&cfg_folder, &cfg_container);
+	char *path = build_output_path(cfg_folder, cfg_container);
+
 	obs_data_t *outset = obs_data_create();
 	obs_data_set_string(outset, "path", path);
-	g.output = obs_output_create("ffmpeg_muxer", "instant_record_clean_output", outset, NULL);
+	/* Hybrid MP4 (mp4_output) is crash-safe AND editable; fall back to
+	 * the standard muxer if it isn't available. Everything else uses the
+	 * ffmpeg muxer (mkv/mov/mp4). */
+	if (strcmp(cfg_container, "hybrid_mp4") == 0) {
+		g.output = obs_output_create("mp4_output", "instant_record_clean_output", outset, NULL);
+		if (!g.output) {
+			obs_log(LOG_WARNING, "[instant-record] clean program: Hybrid MP4 unavailable, using mp4");
+			g.output = obs_output_create("ffmpeg_muxer", "instant_record_clean_output", outset, NULL);
+		}
+	} else {
+		g.output = obs_output_create("ffmpeg_muxer", "instant_record_clean_output", outset, NULL);
+	}
 	obs_data_release(outset);
+	bfree(cfg_folder);
+	bfree(cfg_container);
 
 	obs_output_set_video_encoder(g.output, g.venc);
 	obs_output_set_audio_encoder(g.output, g.aenc, 0);
@@ -296,6 +377,7 @@ bool clean_program_start(void)
 	}
 
 	g.active = true;
+	g.start_unix = (int64_t)time(NULL);
 	obs_log(LOG_INFO, "[instant-record] clean program recording (%ux%u) → %s", cw, ch, path);
 	bfree(path);
 

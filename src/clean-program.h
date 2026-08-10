@@ -40,6 +40,13 @@ bool clean_program_toggle(void);
 /* True while a clean-program recording is active. */
 bool clean_program_active(void);
 
+/* Seconds since the recording started (0 if idle) — for the dock timer. */
+long long clean_program_elapsed_s(void);
+
+/* Copies the name of the camera being followed right now into buf
+ * (empty string if idle / none). For the dock's "recording now" label. */
+void clean_program_current_cam(char *buf, unsigned long buflen);
+
 #ifdef __cplusplus
 }
 #endif
