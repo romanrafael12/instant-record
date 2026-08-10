@@ -989,9 +989,10 @@ private:
 			obs_data_set_bool(d, "use_buffer", buffer->isChecked());
 			obs_data_set_int(d, "buffer_seconds", bufSecs->value());
 			obs_data_set_bool(d, "isolate", isolate->isChecked());
-			obs_data_set_string(d, "clean_path", cleanPath->text().toUtf8().constData());
-			obs_data_set_string(d, "clean_container",
-					    cleanFmt->currentData().toString().toUtf8().constData());
+			QByteArray cleanPathBytes = cleanPath->text().toUtf8();
+			QByteArray cleanFmtBytes = cleanFmt->currentData().toString().toUtf8();
+			obs_data_set_string(d, "clean_path", cleanPathBytes.constData());
+			obs_data_set_string(d, "clean_container", cleanFmtBytes.constData());
 			obs_data_set_bool(d, "sidecar", sidecar->isChecked());
 			sr_set_sidecar_enabled(sidecar->isChecked() ? 1 : 0);
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");

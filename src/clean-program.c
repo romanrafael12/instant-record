@@ -261,6 +261,8 @@ static void teardown_chain_locked(void)
 
 bool clean_program_active(void)
 {
+	if (!g_inited)
+		return false;
 	pthread_mutex_lock(&g.mutex);
 	bool a = g.active;
 	pthread_mutex_unlock(&g.mutex);
@@ -269,6 +271,8 @@ bool clean_program_active(void)
 
 long long clean_program_elapsed_s(void)
 {
+	if (!g_inited)
+		return 0;
 	pthread_mutex_lock(&g.mutex);
 	long long e = g.active ? (long long)(time(NULL) - g.start_unix) : 0;
 	pthread_mutex_unlock(&g.mutex);
@@ -279,6 +283,10 @@ void clean_program_current_cam(char *buf, unsigned long buflen)
 {
 	if (!buf || buflen == 0)
 		return;
+	if (!g_inited) {
+		buf[0] = '\0';
+		return;
+	}
 	pthread_mutex_lock(&g.mutex);
 	snprintf(buf, buflen, "%s", g.active ? g.current_cam_name : "");
 	pthread_mutex_unlock(&g.mutex);

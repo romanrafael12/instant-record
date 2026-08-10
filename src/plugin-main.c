@@ -330,6 +330,12 @@ static void ir_frontend_event(enum obs_frontend_event event, void *priv)
 
 void obs_module_post_load(void)
 {
+	/* Clean Program follows the live camera across scene cuts into one
+	 * continuous, graphics-free file. Init FIRST — the dock's refresh()
+	 * queries clean-program state, so its mutex must exist before the
+	 * dock is constructed. */
+	clean_program_init();
+
 	instant_record_register_dock();
 	ir_ws_register();
 
@@ -345,10 +351,6 @@ void obs_module_post_load(void)
 	hk_clean_toggle = obs_hotkey_register_frontend("InstantRecord.CleanProgram",
 						       obs_module_text("InstantRecord.Hotkey.CleanProgram"),
 						       hk_clean_toggle_cb, NULL);
-
-	/* Clean Program follows the live camera across scene cuts into one
-	 * continuous, graphics-free file. */
-	clean_program_init();
 
 	/* Restore the user's saved key bindings. */
 	ir_hotkeys_load();
