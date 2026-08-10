@@ -124,9 +124,14 @@ void sr_registry_start_all(void)
 /* Save a replay clip from this recorder's buffer (caller holds mutex). */
 static void sr_save_locked(struct source_record_filter *f)
 {
-	if (!f->use_buffer || !f->fileOutput || !f->active)
+	if (!f->active)
 		return;
-	proc_handler_t *ph = obs_output_get_proc_handler(f->fileOutput);
+	/* Buffer-only mode saves from fileOutput (which IS the replay
+	 * buffer); record+buffer mode saves from the parallel buffer. */
+	obs_output_t *bo = f->use_buffer ? f->fileOutput : f->bufferOutput;
+	if (!bo)
+		return;
+	proc_handler_t *ph = obs_output_get_proc_handler(bo);
 	if (!ph)
 		return;
 	calldata_t cd = {0};
@@ -256,6 +261,7 @@ size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 			(f->active && f->status == SR_STATUS_RECORDING) ? (os_gettime_ns() - f->start_timestamp_ns) : 0;
 		rows[n].last_error_code = f->last_error_code;
 		rows[n].use_buffer = f->use_buffer;
+		rows[n].also_buffer = f->also_buffer;
 		pthread_mutex_unlock(&f->mutex);
 		n++;
 	}
@@ -291,6 +297,8 @@ void sr_registry_apply_config(const struct sr_global_config *cfg)
 			obs_data_set_int(s, "fps_divisor", cfg->fps_divisor);
 		if (cfg->use_buffer >= 0)
 			obs_data_set_bool(s, "use_buffer", cfg->use_buffer != 0);
+		if (cfg->also_buffer >= 0)
+			obs_data_set_bool(s, "also_buffer", cfg->also_buffer != 0);
 		if (cfg->buffer_seconds > 0)
 			obs_data_set_int(s, "buffer_seconds", cfg->buffer_seconds);
 		obs_source_update(f->source, s);
@@ -529,6 +537,11 @@ static void write_sidecar(struct source_record_filter *f, bool final, int64_t st
 static void release_chain_locked(struct source_record_filter *f)
 {
 	obs_source_t *parent = obs_filter_get_parent(f->source);
+	if (f->bufferOutput) {
+		obs_output_stop(f->bufferOutput);
+		obs_output_release(f->bufferOutput);
+		f->bufferOutput = NULL;
+	}
 	if (f->fileOutput) {
 		signal_handler_t *sh = obs_output_get_signal_handler(f->fileOutput);
 		signal_handler_disconnect(sh, "stop", on_output_stopped, f);
@@ -681,6 +694,37 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 		bfree(f->current_filepath);
 		f->current_filepath = bstrdup(filepath);
 		write_sidecar(f, false, 0); /* start entry — survives a crash */
+	}
+
+	/* Record + buffer: a second replay-buffer output fed by the SAME
+	 * encoders (one encode, two outputs — not a double encode). */
+	if (!f->use_buffer && f->also_buffer) {
+		obs_source_t *bpar = obs_filter_get_parent(f->source);
+		struct dstr bnm;
+		dstr_init_copy(&bnm, bpar ? obs_source_get_name(bpar) : "source");
+		sanitize(&bnm);
+		struct dstr bfmt;
+		dstr_init(&bfmt);
+		dstr_printf(&bfmt, "%s_clip_%%CCYY-%%MM-%%DD_%%hh-%%mm-%%ss", bnm.array);
+		obs_data_t *bset = obs_data_create();
+		obs_data_set_string(bset, "directory", f->path && *f->path ? f->path : ".");
+		obs_data_set_string(bset, "format", bfmt.array);
+		obs_data_set_string(bset, "extension", f->rec_format && *f->rec_format ? f->rec_format : "mkv");
+		obs_data_set_int(bset, "max_time_sec", f->buffer_seconds > 0 ? f->buffer_seconds : 30);
+		obs_data_set_int(bset, "max_size_mb", 0);
+		f->bufferOutput = obs_output_create("replay_buffer", "instant_record_pbuf", bset, NULL);
+		obs_data_release(bset);
+		dstr_free(&bfmt);
+		dstr_free(&bnm);
+		if (f->bufferOutput) {
+			obs_output_set_video_encoder(f->bufferOutput, f->video_encoder);
+			obs_output_set_audio_encoder(f->bufferOutput, f->audio_encoder, 0);
+			if (!obs_output_start(f->bufferOutput)) {
+				obs_log(LOG_WARNING, "[instant-record] parallel buffer failed to start");
+				obs_output_release(f->bufferOutput);
+				f->bufferOutput = NULL;
+			}
+		}
 	}
 	obs_log(LOG_INFO, "[instant-record] recording %ux%u@1/%u via '%s' -> %s", sw, sh, fps_div, enc_id, filepath);
 	return true;
@@ -845,6 +889,7 @@ static void sr_update(void *data, obs_data_t *settings)
 	f->fps_divisor = (int)obs_data_get_int(settings, "fps_divisor");
 	f->encoder_fallback = obs_data_get_bool(settings, "encoder_fallback");
 	f->use_buffer = obs_data_get_bool(settings, "use_buffer");
+	f->also_buffer = obs_data_get_bool(settings, "also_buffer");
 	f->buffer_seconds = (int)obs_data_get_int(settings, "buffer_seconds");
 	bfree(f->fallback_encoder_id);
 	f->fallback_encoder_id = bstrdup(obs_data_get_string(settings, "fallback_encoder"));
@@ -1031,6 +1076,7 @@ static obs_properties_t *sr_properties(void *data)
 
 	/* Replay buffer: keep last N seconds, save clips on demand. */
 	obs_properties_add_bool(p, "use_buffer", obs_module_text("InstantRecord.Buffer"));
+	obs_properties_add_bool(p, "also_buffer", obs_module_text("InstantRecord.AlsoBuffer"));
 	obs_properties_add_int(p, "buffer_seconds", obs_module_text("InstantRecord.BufferSecs"), 5, 600, 5);
 
 	/* Cost controls — cut encoding load on backup cameras. */

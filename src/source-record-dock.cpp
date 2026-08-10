@@ -42,6 +42,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QCheckBox>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QFileDialog>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -178,6 +180,83 @@ static void sr_remove_filter_from_source(const QString &name)
 	obs_source_release(src);
 }
 
+/* ---- Auto encoder selection ---------------------------------------- */
+
+static QString sr_encoder_family(const QString &id)
+{
+	if (id.contains("nvenc"))
+		return "nvenc";
+	if (id.contains("amf") || id.contains("_amd"))
+		return "amf";
+	if (id.contains("qsv"))
+		return "qsv";
+	if (id.contains("x264"))
+		return "x264";
+	return "other";
+}
+
+/* Keep the best id for a family, preferring an H.264 variant (edits
+ * cleanly everywhere) over HEVC/AV1. */
+static void sr_consider_enc(QString &slot, const QString &id)
+{
+	bool idH264 = id.contains("h264") || id.contains("x264");
+	bool slotH264 = slot.contains("h264") || slot.contains("x264");
+	if (slot.isEmpty() || (idH264 && !slotH264))
+		slot = id;
+}
+
+/* Family the live stream is currently encoding with (empty if not
+ * streaming). Used to send ISO recording to a *different* encoder. */
+static QString sr_stream_family()
+{
+	QString fam;
+	obs_output_t *out = obs_frontend_get_streaming_output();
+	if (out) {
+		obs_encoder_t *venc = obs_output_get_video_encoder(out);
+		if (venc)
+			fam = sr_encoder_family(QString::fromUtf8(obs_encoder_get_id(venc)));
+		obs_output_release(out);
+	}
+	return fam;
+}
+
+/* Pick the best available encoder: hardware first (NVENC > AMF > QSV >
+ * x264), and prefer one that isn't the same family the stream is using
+ * so the ISO recording doesn't fight the stream for the same chip.
+ * Adapts to whatever hardware the machine actually has. */
+static QString sr_resolve_auto_encoder()
+{
+	QString nv, amf, qsv, x264;
+	const char *id;
+	size_t i = 0;
+	while (obs_enum_encoder_types(i++, &id)) {
+		if (obs_get_encoder_type(id) != OBS_ENCODER_VIDEO)
+			continue;
+		QString s = QString::fromUtf8(id);
+		QString fam = sr_encoder_family(s);
+		if (fam == "nvenc")
+			sr_consider_enc(nv, s);
+		else if (fam == "amf")
+			sr_consider_enc(amf, s);
+		else if (fam == "qsv")
+			sr_consider_enc(qsv, s);
+		else if (fam == "x264")
+			sr_consider_enc(x264, s);
+	}
+	const QString fams[4] = {"nvenc", "amf", "qsv", "x264"};
+	QString ids[4] = {nv, amf, qsv, x264};
+	QString streamFam = sr_stream_family();
+	/* Best available whose family differs from the stream's. */
+	for (int k = 0; k < 4; k++)
+		if (!ids[k].isEmpty() && fams[k] != streamFam)
+			return ids[k];
+	/* Otherwise the best available, even if it shares with the stream. */
+	for (int k = 0; k < 4; k++)
+		if (!ids[k].isEmpty())
+			return ids[k];
+	return "obs_x264";
+}
+
 struct Card {
 	QFrame *w;
 	QLabel *dot;
@@ -210,6 +289,8 @@ public:
 			"QPushButton#add{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7b5cf0,stop:1 #5f3fd0);border:none;color:#fff;}"
 			"QPushButton#addtop{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #7b5cf0,stop:1 #5f3fd0);border:none;color:#fff;border-radius:14px;font-size:16px;font-weight:800;padding:0;}"
 			"QPushButton#addtop:hover{background:#8b6cff;}"
+			"QPushButton#updates{background:transparent;border:none;color:#7c848c;font-size:11px;font-weight:600;padding:2px 4px;text-decoration:underline;}"
+			"QPushButton#updates:hover{color:" IR_GOLD ";}"
 			"QPushButton#apply{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f7c04a,stop:1 #e9a41f);border:none;color:#3a2a08;font-weight:800;}"
 			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
 			"QPushButton#del{background:transparent;border:none;color:#5a5f65;font-weight:800;padding:2px 6px;}"
@@ -249,9 +330,20 @@ public:
 		addTop->setObjectName("addtop");
 		addTop->setToolTip(T("InstantRecord.Dock.AddCams"));
 		addTop->setFixedSize(28, 28);
+		auto *updates = new QPushButton(T("InstantRecord.Dock.Updates"), this);
+		updates->setObjectName("updates");
+		updates->setToolTip(T("InstantRecord.Dock.UpdatesTip"));
+		updates->setCursor(Qt::PointingHandCursor);
+		header->addSpacing(8);
+		header->addWidget(updates);
 		header->addSpacing(8);
 		header->addWidget(addTop);
 		root->addLayout(header);
+
+		connect(updates, &QPushButton::clicked, this, [] {
+			QDesktopServices::openUrl(
+				QUrl("https://github.com/romanrafael12/instant-record/releases/latest"));
+		});
 
 		cardsBox = new QVBoxLayout();
 		cardsBox->setSpacing(6);
@@ -418,7 +510,7 @@ private:
 			c.status->setText(st);
 			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
 			c.time->setText(format_elapsed(rows[i].elapsed_ns));
-			c.clip->setVisible(rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING);
+			c.clip->setVisible((rows[i].use_buffer || rows[i].also_buffer) && rows[i].status == SR_STATUS_RECORDING);
 			/* Block removal while this camera is recording/buffering. */
 			c.del->setEnabled(!active);
 			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
@@ -589,6 +681,8 @@ private:
 			const char *nm = obs_encoder_get_display_name(encId);
 			enc->addItem(nm ? nm : encId, QString(encId));
 		}
+		enc->insertItem(0, T("InstantRecord.Global.Encoder.Auto"), QString("auto"));
+		enc->setCurrentIndex(0);
 		grid->addWidget(enc, r++, 1);
 
 		grid->addWidget(new QLabel(T("InstantRecord.Global.Bitrate")), r, 0);
@@ -622,6 +716,8 @@ private:
 
 		auto *buffer = new QCheckBox(T("InstantRecord.Global.Buffer"), &dlg);
 		grid->addWidget(buffer, r++, 1);
+		auto *alsoBuffer = new QCheckBox(T("InstantRecord.Global.AlsoBuffer"), &dlg);
+		grid->addWidget(alsoBuffer, r++, 1);
 		grid->addWidget(new QLabel(T("InstantRecord.Global.BufferSecs")), r, 0);
 		auto *bufSecs = new QSpinBox(&dlg);
 		bufSecs->setRange(5, 600);
@@ -643,6 +739,7 @@ private:
 			selectByData(scale, (int)obs_data_get_int(saved, "scale"));
 			selectByData(fps, (int)obs_data_get_int(saved, "fps"));
 			buffer->setChecked(obs_data_get_bool(saved, "use_buffer"));
+			alsoBuffer->setChecked(obs_data_get_bool(saved, "also_buffer"));
 			if (obs_data_get_int(saved, "buffer_seconds") > 0)
 				bufSecs->setValue((int)obs_data_get_int(saved, "buffer_seconds"));
 			isolate->setChecked(obs_data_get_bool(saved, "isolate"));
@@ -662,30 +759,38 @@ private:
 		connect(apply, &QPushButton::clicked, &dlg, [&] {
 			QByteArray path = pathEdit->text().toUtf8();
 			QByteArray fmtId = fmt->currentData().toString().toUtf8();
-			QByteArray encStr = enc->currentData().toString().toUtf8();
+			QString encSel = enc->currentData().toString();
+			/* "Auto" resolves to a concrete encoder now (adapting to the
+			 * machine + the live stream), but we persist "auto" so it
+			 * re-resolves next time hardware/stream changes. */
+			QByteArray encForFilters =
+				(encSel == "auto") ? sr_resolve_auto_encoder().toUtf8() : encSel.toUtf8();
+			QByteArray encPref = encSel.toUtf8();
 
 			struct sr_global_config cfg;
 			cfg.path = path.isEmpty() ? nullptr : path.constData();
 			cfg.rec_format = fmtId.constData();
-			cfg.encoder_id = encStr.isEmpty() ? nullptr : encStr.constData();
+			cfg.encoder_id = encForFilters.isEmpty() ? nullptr : encForFilters.constData();
 			cfg.bitrate = bitrate->value();
 			cfg.record_mode = mode->currentData().toInt();
 			cfg.isolate_audio = isolate->isChecked() ? 1 : 0;
 			cfg.scale_mode = scale->currentData().toInt();
 			cfg.fps_divisor = fps->currentData().toInt();
 			cfg.use_buffer = buffer->isChecked() ? 1 : 0;
+			cfg.also_buffer = alsoBuffer->isChecked() ? 1 : 0;
 			cfg.buffer_seconds = bufSecs->value();
 			sr_registry_apply_config(&cfg);
 
 			obs_data_t *d = obs_data_create();
 			obs_data_set_string(d, "path", path.constData());
 			obs_data_set_string(d, "container", fmtId.constData());
-			obs_data_set_string(d, "encoder", encStr.constData());
+			obs_data_set_string(d, "encoder", encPref.constData());
 			obs_data_set_int(d, "bitrate", bitrate->value());
 			obs_data_set_int(d, "trigger", mode->currentData().toInt());
 			obs_data_set_int(d, "scale", scale->currentData().toInt());
 			obs_data_set_int(d, "fps", fps->currentData().toInt());
 			obs_data_set_bool(d, "use_buffer", buffer->isChecked());
+			obs_data_set_bool(d, "also_buffer", alsoBuffer->isChecked());
 			obs_data_set_int(d, "buffer_seconds", bufSecs->value());
 			obs_data_set_bool(d, "isolate", isolate->isChecked());
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");

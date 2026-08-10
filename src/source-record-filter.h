@@ -69,6 +69,7 @@ struct source_record_filter {
 	obs_encoder_t *video_encoder;
 	obs_encoder_t *audio_encoder;
 	obs_output_t *fileOutput;
+	obs_output_t *bufferOutput; /* parallel replay buffer while recording */
 
 	/* Current capture geometry — detects resolution changes
 	 * (the root cause of upstream crash issue #166). */
@@ -87,6 +88,7 @@ struct source_record_filter {
 	bool encoder_fallback;    /* try fallback encoder on start fail */
 	char *fallback_encoder_id;
 	bool use_buffer;   /* replay-buffer mode instead of continuous  */
+	bool also_buffer;  /* keep a replay buffer WHILE recording a file */
 	int buffer_seconds;/* how many seconds to keep buffered         */
 
 	/* Runtime state. */
@@ -133,6 +135,7 @@ struct sr_status_row {
 	int64_t elapsed_ns; /* since start, if recording; else 0 */
 	int last_error_code;
 	bool use_buffer;    /* true if this camera is in replay-buffer mode */
+	bool also_buffer;   /* recording a file AND keeping a buffer */
 };
 
 /* Copies up to max_rows snapshots into `rows`; returns the count. */
@@ -166,6 +169,7 @@ struct sr_global_config {
 	int scale_mode;      /* < 0 = unchanged  */
 	int fps_divisor;     /* <= 0 = unchanged */
 	int use_buffer;      /* < 0 = unchanged, else 0/1 */
+	int also_buffer;     /* < 0 = unchanged, else 0/1 */
 	int buffer_seconds;  /* <= 0 = unchanged */
 };
 void sr_registry_apply_config(const struct sr_global_config *cfg);
@@ -173,6 +177,11 @@ void sr_registry_apply_config(const struct sr_global_config *cfg);
 /* Registers the Qt status dock with the OBS frontend. Implemented in
  * source-record-dock.cpp; no-op if built without Qt/frontend. */
 void instant_record_register_dock(void);
+
+/* obs-websocket vendor API (remote control). No-op if obs-websocket
+ * isn't loaded. Implemented in websocket-vendor.c. */
+void instant_record_register_websocket(void);
+void instant_record_unregister_websocket(void);
 
 #ifdef __cplusplus
 }
