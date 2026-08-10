@@ -593,7 +593,7 @@ private:
 			c.status->setText(st);
 			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
 			c.time->setText(format_elapsed(rows[i].elapsed_ns));
-			c.clip->setVisible((rows[i].use_buffer || rows[i].also_buffer) && rows[i].status == SR_STATUS_RECORDING);
+			c.clip->setVisible(rows[i].use_buffer && rows[i].status == SR_STATUS_RECORDING);
 			/* Block removal while this camera is recording/buffering. */
 			c.del->setEnabled(!active);
 			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
@@ -800,8 +800,6 @@ private:
 
 		auto *buffer = new QCheckBox(T("InstantRecord.Global.Buffer"), &dlg);
 		grid->addWidget(buffer, r++, 1);
-		auto *alsoBuffer = new QCheckBox(T("InstantRecord.Global.AlsoBuffer"), &dlg);
-		grid->addWidget(alsoBuffer, r++, 1);
 		grid->addWidget(new QLabel(T("InstantRecord.Global.BufferSecs")), r, 0);
 		auto *bufSecs = new QSpinBox(&dlg);
 		bufSecs->setRange(5, 600);
@@ -823,7 +821,6 @@ private:
 			selectByData(scale, (int)obs_data_get_int(saved, "scale"));
 			selectByData(fps, (int)obs_data_get_int(saved, "fps"));
 			buffer->setChecked(obs_data_get_bool(saved, "use_buffer"));
-			alsoBuffer->setChecked(obs_data_get_bool(saved, "also_buffer"));
 			if (obs_data_get_int(saved, "buffer_seconds") > 0)
 				bufSecs->setValue((int)obs_data_get_int(saved, "buffer_seconds"));
 			isolate->setChecked(obs_data_get_bool(saved, "isolate"));
@@ -870,7 +867,7 @@ private:
 			cfg.scale_mode = scale->currentData().toInt();
 			cfg.fps_divisor = fps->currentData().toInt();
 			cfg.use_buffer = buffer->isChecked() ? 1 : 0;
-			cfg.also_buffer = alsoBuffer->isChecked() ? 1 : 0;
+			cfg.also_buffer = 0; /* record+buffer simultaneous removed (unstable) */
 			cfg.buffer_seconds = bufSecs->value();
 			sr_registry_apply_config(&cfg);
 
@@ -883,7 +880,6 @@ private:
 			obs_data_set_int(d, "scale", scale->currentData().toInt());
 			obs_data_set_int(d, "fps", fps->currentData().toInt());
 			obs_data_set_bool(d, "use_buffer", buffer->isChecked());
-			obs_data_set_bool(d, "also_buffer", alsoBuffer->isChecked());
 			obs_data_set_int(d, "buffer_seconds", bufSecs->value());
 			obs_data_set_bool(d, "isolate", isolate->isChecked());
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");

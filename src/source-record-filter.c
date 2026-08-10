@@ -963,7 +963,10 @@ static void sr_update(void *data, obs_data_t *settings)
 	f->fps_divisor = (int)obs_data_get_int(settings, "fps_divisor");
 	f->encoder_fallback = obs_data_get_bool(settings, "encoder_fallback");
 	f->use_buffer = obs_data_get_bool(settings, "use_buffer");
-	f->also_buffer = obs_data_get_bool(settings, "also_buffer");
+	/* Record+buffer simultaneous is disabled: its dual-output teardown
+	 * (two outputs sharing one encoder) can hang on stop. Use one mode at
+	 * a time — buffer OR continuous record. */
+	f->also_buffer = false;
 	f->buffer_seconds = (int)obs_data_get_int(settings, "buffer_seconds");
 	bfree(f->fallback_encoder_id);
 	f->fallback_encoder_id = bstrdup(obs_data_get_string(settings, "fallback_encoder"));
@@ -1151,7 +1154,6 @@ static obs_properties_t *sr_properties(void *data)
 
 	/* Replay buffer: keep last N seconds, save clips on demand. */
 	obs_properties_add_bool(p, "use_buffer", obs_module_text("InstantRecord.Buffer"));
-	obs_properties_add_bool(p, "also_buffer", obs_module_text("InstantRecord.AlsoBuffer"));
 	obs_properties_add_int(p, "buffer_seconds", obs_module_text("InstantRecord.BufferSecs"), 5, 600, 5);
 
 	/* Cost controls — cut encoding load on backup cameras. */
