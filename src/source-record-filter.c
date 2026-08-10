@@ -537,14 +537,26 @@ static void write_sidecar(struct source_record_filter *f, bool final, int64_t st
 static void release_chain_locked(struct source_record_filter *f)
 {
 	obs_source_t *parent = obs_filter_get_parent(f->source);
+
+	/* Disconnect the stop signal FIRST so a stop can't re-enter teardown
+	 * while we're freeing the chain. */
+	if (f->fileOutput) {
+		signal_handler_t *sh = obs_output_get_signal_handler(f->fileOutput);
+		signal_handler_disconnect(sh, "stop", on_output_stopped, f);
+	}
+
+	/* Release both outputs BEFORE the shared encoder. obs_output_release
+	 * (on the last ref) destroys the output, which force-stops it and
+	 * WAITS for its thread to finish — so we must NOT pre-call
+	 * obs_output_stop() here: doing so on the replay-buffer output starts
+	 * an async stop that then races/double-stops during destroy and
+	 * crashes. Releasing outputs first also guarantees no output thread
+	 * touches the encoder after it's freed. */
 	if (f->bufferOutput) {
-		obs_output_stop(f->bufferOutput);
 		obs_output_release(f->bufferOutput);
 		f->bufferOutput = NULL;
 	}
 	if (f->fileOutput) {
-		signal_handler_t *sh = obs_output_get_signal_handler(f->fileOutput);
-		signal_handler_disconnect(sh, "stop", on_output_stopped, f);
 		obs_output_release(f->fileOutput);
 		f->fileOutput = NULL;
 	}
