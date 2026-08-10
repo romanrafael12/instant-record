@@ -1,10 +1,9 @@
 <h1 align="center">Instant Record</h1>
-
 <p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b></p>
 
 ---
 
-Instant Record records **each camera to its own file** and keeps a **per-camera replay buffer**, so you can grab a clip of every angle the instant something happens. Built for live multi-camera work (sports, worship, events).
+Instant Record gives **each camera its own recording** — either a continuous ISO file per camera, or a **per-camera replay buffer** so you can grab a clip of every angle the instant something happens. Built for live multi-camera work (sports, worship, events).
 
 <div align="center">
 
@@ -24,18 +23,15 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
 ## Screenshots
 
 <p align="center">
- <img width="263" height="311" alt="image" src="https://github.com/user-attachments/assets/6ac442b0-f0d1-49cf-9753-04853889d993"  width="70%" alt="Instant Record dock — one card per camera with replay buffer"/>
+  <img width="263" height="311" alt="Instant Record dock — one card per camera with replay buffer" src="https://github.com/user-attachments/assets/6ac442b0-f0d1-49cf-9753-04853889d993"/>
   <br/><em>The dock — one card per camera, with a per-camera replay buffer.</em>
 </p>
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/a993443d-81c0-44df-91cb-c529da3ae7f1" width="70%" alt="Config — apply to all cameras"/>
-  <img width="276" height="55" alt="image" src="https://github.com/user-attachments/assets/2ee87cf9-8077-499a-a0f0-f21c06ae1e82" />
-
+  <img width="276" height="55" alt="Config bar" src="https://github.com/user-attachments/assets/2ee87cf9-8077-499a-a0f0-f21c06ae1e82"/>
   <br/><em>Config — set encoder, container, resolution and buffer once, apply to every camera.</em>
 </p>
-
-
 
 ## Install (Windows)
 
@@ -49,7 +45,8 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
 1. **Add cameras — the fastest way:** drag and drop a source from OBS's Sources list onto the dock. **The filter is added automatically after you drop it** — no need to open Filters. (You can also use the **＋** button, or add the **Instant Record (Source)** filter manually.) Use the **✕** on a card to remove it.
 2. Open **Config** in the dock and set it for all cameras at once:
    - **Output folder** — where clips are saved.
-   - **Trigger** — *with OBS main recording*, *manual (hotkey)*, or *always*. Or turn on **Replay buffer mode** to save clips on demand.
+   - **Recording mode** — pick one: **Replay buffer mode** (keeps the last N seconds in RAM; save a clip on demand) **or** continuous recording (each camera records to its own file). Use one mode at a time.
+   - **Trigger** (for continuous recording) — *with OBS main recording*, *manual (hotkey)*, or *always*.
    - **Encoder / bitrate / container** (see below).
 3. Run it from the dock: **Start all / Stop all / Save buffer**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant".
 
