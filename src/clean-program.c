@@ -227,14 +227,39 @@ bool clean_program_start(void)
 		return true;
 	}
 
-	/* One view rendering the program at the full canvas resolution. */
-	g.view = obs_view_create();
+	/* Find the camera of the current scene and size the recording to it,
+	 * so the camera FILLS the whole frame (Option A: full-screen clean
+	 * feed, ignoring how it's scaled/placed inside the scene). All cameras
+	 * are expected to share a resolution, so this base stays correct across
+	 * cuts. */
+	obs_source_t *cam0 = find_current_camera(); /* +1 ref or NULL */
 
 	struct obs_video_info ovi = {0};
 	obs_get_video_info(&ovi);
+	uint32_t cw = 0, ch = 0;
+	if (cam0) {
+		cw = obs_source_get_base_width(cam0);
+		ch = obs_source_get_base_height(cam0);
+	}
+	if (cw == 0 || ch == 0) {
+		cw = ovi.base_width; /* no camera yet → canvas size */
+		ch = ovi.base_height;
+	}
+	ovi.base_width = cw;
+	ovi.base_height = ch;
+	ovi.output_width = cw;
+	ovi.output_height = ch;
+
+	g.view = obs_view_create();
+	if (cam0) {
+		obs_view_set_source(g.view, 0, cam0);
+		g.current_cam = cam0; /* the view now holds the strong ref */
+	}
 	g.video_output = obs_view_add2(g.view, &ovi);
 	if (!g.video_output) {
 		obs_log(LOG_ERROR, "[instant-record] clean program: obs_view_add2 failed");
+		if (cam0)
+			obs_source_release(cam0);
 		teardown_chain_locked();
 		pthread_mutex_unlock(&g.mutex);
 		return false;
@@ -263,17 +288,20 @@ bool clean_program_start(void)
 		const char *err = obs_output_get_last_error(g.output);
 		obs_log(LOG_ERROR, "[instant-record] clean program: start failed: %s", err ? err : "(no detail)");
 		bfree(path);
+		if (cam0)
+			obs_source_release(cam0);
 		teardown_chain_locked();
 		pthread_mutex_unlock(&g.mutex);
 		return false;
 	}
 
 	g.active = true;
-	obs_log(LOG_INFO, "[instant-record] clean program recording → %s", path);
+	obs_log(LOG_INFO, "[instant-record] clean program recording (%ux%u) → %s", cw, ch, path);
 	bfree(path);
 
-	/* Point at the camera of whatever scene is live right now. */
-	follow_current_scene_locked();
+	/* Our probe ref on cam0; the view keeps its own reference. */
+	if (cam0)
+		obs_source_release(cam0);
 
 	pthread_mutex_unlock(&g.mutex);
 	return true;
