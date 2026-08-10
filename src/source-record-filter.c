@@ -857,6 +857,13 @@ static void stop_file_output_locked(struct source_record_filter *f)
 		bfree(f->current_filepath);
 		f->current_filepath = NULL;
 	}
+	/* Async-stop BOTH outputs. In record+buffer mode the parallel replay
+	 * buffer (bufferOutput) runs alongside the file output; if we only
+	 * stop the file output, the still-running buffer gets force-stopped
+	 * cold during the graphics-thread teardown and hangs. Requesting its
+	 * stop here lets it wind down on its own first. */
+	if (f->bufferOutput)
+		obs_output_stop(f->bufferOutput);
 	obs_output_stop(f->fileOutput); /* async; stop signal → need_teardown → video_tick */
 	if (f->status == SR_STATUS_RECORDING)
 		f->status = SR_STATUS_IDLE;
