@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 #include <string.h>
 #include "source-record-filter.h"
+#include "clean-program.h"
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -210,6 +211,7 @@ static void ir_ws_unregister(void)
 static obs_hotkey_id hk_save_all = OBS_INVALID_HOTKEY_ID;
 static obs_hotkey_id hk_start_all = OBS_INVALID_HOTKEY_ID;
 static obs_hotkey_id hk_stop_all = OBS_INVALID_HOTKEY_ID;
+static obs_hotkey_id hk_clean_toggle = OBS_INVALID_HOTKEY_ID;
 
 static void hk_save_all_cb(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool pressed)
 {
@@ -238,6 +240,15 @@ static void hk_stop_all_cb(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool 
 		sr_registry_stop_all();
 }
 
+static void hk_clean_toggle_cb(void *data, obs_hotkey_id id, obs_hotkey_t *hk, bool pressed)
+{
+	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(id);
+	UNUSED_PARAMETER(hk);
+	if (pressed)
+		clean_program_toggle();
+}
+
 bool obs_module_load(void)
 {
 	obs_register_source(&source_record_filter_info);
@@ -263,6 +274,9 @@ static void ir_hotkeys_save(void)
 	obs_data_array_release(a);
 	a = obs_hotkey_save(hk_stop_all);
 	obs_data_set_array(data, "InstantRecord.StopAll", a);
+	obs_data_array_release(a);
+	a = obs_hotkey_save(hk_clean_toggle);
+	obs_data_set_array(data, "InstantRecord.CleanProgram", a);
 	obs_data_array_release(a);
 
 	char *dir = obs_module_get_config_path(obs_current_module(), "");
@@ -298,6 +312,9 @@ static void ir_hotkeys_load(void)
 	a = obs_data_get_array(data, "InstantRecord.StopAll");
 	obs_hotkey_load(hk_stop_all, a);
 	obs_data_array_release(a);
+	a = obs_data_get_array(data, "InstantRecord.CleanProgram");
+	obs_hotkey_load(hk_clean_toggle, a);
+	obs_data_array_release(a);
 
 	obs_data_release(data);
 }
@@ -325,6 +342,13 @@ void obs_module_post_load(void)
 	hk_stop_all = obs_hotkey_register_frontend("InstantRecord.StopAll",
 						   obs_module_text("InstantRecord.Hotkey.StopAll"), hk_stop_all_cb,
 						   NULL);
+	hk_clean_toggle = obs_hotkey_register_frontend("InstantRecord.CleanProgram",
+						       obs_module_text("InstantRecord.Hotkey.CleanProgram"),
+						       hk_clean_toggle_cb, NULL);
+
+	/* Clean Program follows the live camera across scene cuts into one
+	 * continuous, graphics-free file. */
+	clean_program_init();
 
 	/* Restore the user's saved key bindings. */
 	ir_hotkeys_load();
@@ -345,6 +369,11 @@ void obs_module_unload(void)
 		obs_hotkey_unregister(hk_start_all);
 	if (hk_stop_all != OBS_INVALID_HOTKEY_ID)
 		obs_hotkey_unregister(hk_stop_all);
+	if (hk_clean_toggle != OBS_INVALID_HOTKEY_ID)
+		obs_hotkey_unregister(hk_clean_toggle);
+
+	/* Stop the clean-program recording and detach its callback. */
+	clean_program_shutdown();
 
 	/* Finalize any recordings still rolling so files aren't left open. */
 	sr_registry_stop_all();
