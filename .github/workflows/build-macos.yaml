@@ -1,0 +1,54 @@
+name: Build macOS
+
+# Unsigned macOS build (Universal: arm64 + x86_64) to verify the plugin
+# compiles and loads. Signing/notarization is added later.
+# OBS requires the macOS 15 SDK (Xcode 16), so we run on macos-15 and
+# select an Xcode 16.x toolchain explicitly.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: Build for macOS (Universal, unsigned)
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          ls /Applications | grep -i Xcode || true
+          sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          echo "SDKs:"; xcodebuild -showsdks | grep -i macos || true
+
+      - name: Configure
+        run: cmake --preset macos
+
+      - name: Build
+        run: cmake --build --preset macos
+
+      - name: Assemble plugin
+        run: >
+          cmake --install build_macos
+          --prefix "${{ github.workspace }}/release_macos"
+          --config RelWithDebInfo
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-macos-universal
+          path: release_macos/**
+          if-no-files-found: warn
+
+      - name: Upload raw build (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-macos-raw
+          path: |
+            build_macos/**/*.plugin
+          if-no-files-found: ignore
