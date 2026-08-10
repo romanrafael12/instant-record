@@ -402,20 +402,9 @@ public:
 		addTop->setObjectName("addtop");
 		addTop->setToolTip(T("InstantRecord.Dock.AddCams"));
 		addTop->setFixedSize(28, 28);
-		auto *updates = new QPushButton(T("InstantRecord.Dock.Updates"), this);
-		updates->setObjectName("updates");
-		updates->setToolTip(T("InstantRecord.Dock.UpdatesTip"));
-		updates->setCursor(Qt::PointingHandCursor);
-		header->addSpacing(8);
-		header->addWidget(updates);
 		header->addSpacing(8);
 		header->addWidget(addTop);
 		root->addLayout(header);
-
-		connect(updates, &QPushButton::clicked, this, [] {
-			QDesktopServices::openUrl(
-				QUrl("https://github.com/romanrafael12/instant-record/releases/latest"));
-		});
 
 		/* Scrollable, width-adaptive grid of camera cards. Lives in a
 		 * scroll area so many cameras never push the header or the
@@ -448,7 +437,7 @@ public:
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveBuffer"), this);
 		saveAll->setObjectName("save");
-		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
+		auto *config = new QPushButton(T("InstantRecord.Dock.Config"), this);
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
@@ -844,7 +833,16 @@ private:
 		auto *apply = new QPushButton(T("InstantRecord.Global.ApplyAll"), &dlg);
 		apply->setObjectName("apply");
 		auto *cancel = new QPushButton(T("InstantRecord.Global.Cancel"), &dlg);
+		auto *updates = new QPushButton(T("InstantRecord.Dock.Updates"), &dlg);
+		updates->setObjectName("updates");
+		updates->setToolTip(T("InstantRecord.Dock.UpdatesTip"));
+		updates->setCursor(Qt::PointingHandCursor);
+		connect(updates, &QPushButton::clicked, &dlg, [] {
+			QDesktopServices::openUrl(
+				QUrl("https://github.com/romanrafael12/instant-record/releases/latest"));
+		});
 		auto *bl = new QHBoxLayout();
+		bl->addWidget(updates);
 		bl->addStretch();
 		bl->addWidget(cancel);
 		bl->addWidget(apply);
