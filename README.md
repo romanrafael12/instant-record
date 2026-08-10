@@ -1,6 +1,6 @@
-# Instant Record
+<h1 align="center">Instant Record</h1>
 
-**Per-source (ISO) multi-camera recording & replay for OBS Studio (Windows)**
+<p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b></p>
 
 ---
 
