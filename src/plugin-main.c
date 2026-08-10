@@ -1,6 +1,6 @@
 /*
 Instant Record
-Copyright (C) 2026 Rafael Roman <support@instanrp.com>
+Copyright (C) 2026 Rafael Roman <rafael@instanrp.com>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

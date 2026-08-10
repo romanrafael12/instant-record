@@ -469,6 +469,22 @@ static void sanitize(struct dstr *s)
 	}
 }
 
+/* File extension for a given rec_format. "hybrid_mp4" is a distinct
+ * recording mode (native mp4_output) but its files are plain .mp4. */
+static const char *sr_file_ext(const char *rec_format)
+{
+	if (!rec_format || !*rec_format)
+		return "mkv";
+	if (strcmp(rec_format, "hybrid_mp4") == 0)
+		return "mp4";
+	return rec_format;
+}
+
+static bool sr_is_hybrid(const char *rec_format)
+{
+	return rec_format && strcmp(rec_format, "hybrid_mp4") == 0;
+}
+
 static void build_output_filepath(struct source_record_filter *f, struct dstr *out)
 {
 	obs_source_t *parent = obs_filter_get_parent(f->source);
@@ -492,9 +508,10 @@ static void build_output_filepath(struct source_record_filter *f, struct dstr *o
 	/* name + timestamp + per-filter index guarantees uniqueness even
 	 * for identically named sources started in the same second. */
 	dstr_printf(out, "%s/%s_%s_%03d.%s", f->path && *f->path ? f->path : ".", name.array, stamp,
-		    f->file_index++, f->rec_format && *f->rec_format ? f->rec_format : "mkv");
+		    f->file_index++, sr_file_ext(f->rec_format));
 	dstr_free(&name);
 }
+
 
 /* ================================================================== */
 /* Sync sidecar — one <clip>.json per recording with precise start/    */
@@ -665,7 +682,7 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 		dstr_printf(&fmt, "%s_%%CCYY-%%MM-%%DD_%%hh-%%mm-%%ss", nm.array);
 		obs_data_set_string(outset, "directory", f->path && *f->path ? f->path : ".");
 		obs_data_set_string(outset, "format", fmt.array);
-		obs_data_set_string(outset, "extension", f->rec_format && *f->rec_format ? f->rec_format : "mkv");
+		obs_data_set_string(outset, "extension", sr_file_ext(f->rec_format));
 		obs_data_set_int(outset, "max_time_sec", f->buffer_seconds > 0 ? f->buffer_seconds : 30);
 		obs_data_set_int(outset, "max_size_mb", 0);
 		f->fileOutput = obs_output_create("replay_buffer", "instant_record_buffer", outset, NULL);
@@ -673,7 +690,18 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 		dstr_free(&nm);
 	} else {
 		obs_data_set_string(outset, "path", filepath);
-		f->fileOutput = obs_output_create("ffmpeg_muxer", "instant_record_output", outset, NULL);
+		if (sr_is_hybrid(f->rec_format)) {
+			/* Native Hybrid MP4 (crash-safe + editable, no remux). */
+			f->fileOutput = obs_output_create("mp4_output", "instant_record_output", outset, NULL);
+			if (!f->fileOutput) {
+				obs_log(LOG_WARNING,
+					"[instant-record] Hybrid MP4 (mp4_output) unavailable; using standard mp4");
+				f->fileOutput =
+					obs_output_create("ffmpeg_muxer", "instant_record_output", outset, NULL);
+			}
+		} else {
+			f->fileOutput = obs_output_create("ffmpeg_muxer", "instant_record_output", outset, NULL);
+		}
 	}
 	obs_data_release(outset);
 
@@ -721,7 +749,7 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 		obs_data_t *bset = obs_data_create();
 		obs_data_set_string(bset, "directory", f->path && *f->path ? f->path : ".");
 		obs_data_set_string(bset, "format", bfmt.array);
-		obs_data_set_string(bset, "extension", f->rec_format && *f->rec_format ? f->rec_format : "mkv");
+		obs_data_set_string(bset, "extension", sr_file_ext(f->rec_format));
 		obs_data_set_int(bset, "max_time_sec", f->buffer_seconds > 0 ? f->buffer_seconds : 30);
 		obs_data_set_int(bset, "max_size_mb", 0);
 		f->bufferOutput = obs_output_create("replay_buffer", "instant_record_pbuf", bset, NULL);
@@ -1071,6 +1099,7 @@ static obs_properties_t *sr_properties(void *data)
 	obs_property_list_add_string(fmt, "mkv", "mkv");
 	obs_property_list_add_string(fmt, "mp4", "mp4");
 	obs_property_list_add_string(fmt, "mov", "mov");
+	obs_property_list_add_string(fmt, obs_module_text("InstantRecord.Format.Hybrid"), "hybrid_mp4");
 
 	obs_property_t *enc = obs_properties_add_list(p, "encoder", obs_module_text("InstantRecord.Encoder"),
 						      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);

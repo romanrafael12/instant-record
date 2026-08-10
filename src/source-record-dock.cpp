@@ -821,6 +821,7 @@ private:
 		fmt->addItem("mkv", "mkv");
 		fmt->addItem("mp4", "mp4");
 		fmt->addItem("mov", "mov");
+		fmt->addItem(T("InstantRecord.Format.Hybrid"), "hybrid_mp4");
 		grid->addWidget(fmt, r++, 1);
 
 		grid->addWidget(new QLabel(T("InstantRecord.Global.Encoder")), r, 0);
