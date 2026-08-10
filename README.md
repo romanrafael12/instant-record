@@ -1,9 +1,10 @@
 <h1 align="center">Instant Record</h1>
+
 <p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b></p>
 
 ---
 
-Instant Record gives **each camera its own recording** — either a continuous ISO file per camera, or a **per-camera replay buffer** so you can grab a clip of every angle the instant something happens. Built for live multi-camera work (sports, worship, events).
+Instant Record gives **each camera its own recording** — either a continuous ISO file per camera, or a **per-camera replay buffer** so you can grab a clip of every angle the instant something happens. It can also record a **Clean Program**: the switch between your cameras in one continuous file, with **no graphics** burned in. Built for live multi-camera work (sports, worship, events).
 
 <div align="center">
 
@@ -47,7 +48,18 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
    - **Recording mode** — pick one: **Replay buffer mode** (keeps the last N seconds in RAM; save a clip on demand) **or** continuous recording (each camera records to its own file). Use one mode at a time.
    - **Trigger** (for continuous recording) — *with OBS main recording*, *manual (hotkey)*, or *always*.
    - **Encoder / bitrate / container** (see below).
+   - **Clean Program folder / format** — where the clean-program file is saved and its container (defaults to Hybrid MP4).
+   - **Sync `.json` files** — on by default (one per clip, with precise start/stop timestamps to align cameras in post). Uncheck it if you don't want them.
 3. Run it from the dock: **Start all / Stop all / Save buffer**. For hotkeys, open **OBS Settings → Hotkeys** and search "Instant".
+
+## Clean Program
+
+**Clean Program** records the switch between your cameras — the "program" — into **one continuous file with no graphics** (no lower-thirds, no overlays). As you cut between scenes, it follows the camera of each scene automatically; the file never splits and never shows your on-air graphics.
+
+- Press **Clean Program** in the dock (or bind the *Instant Record: Clean Program* hotkey). A card appears at the top showing the elapsed time and **which camera it's recording right now**, and the on-air camera is highlighted in the list. Press **Stop clean** to finish.
+- It follows the camera by looking inside each scene for the source that carries the Instant Record filter, so the cameras you already added just work. On scenes with no clear camera (PiP, replay, playlists) it keeps the last camera, so the file never goes black.
+- Each camera fills the whole frame (the clean camera feed), regardless of how it's scaled or placed in your scene.
+- Only one recording mode runs at a time per camera; Clean Program is its own separate recording and can run alongside your per-camera setup.
 
 ## Encoders that work
 
