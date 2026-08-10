@@ -38,6 +38,16 @@ if(ENABLE_FRONTEND_API)
   endif()
 endif()
 
+# --- macOS frontend symbols resolved at load time ---------------------------
+# The obs_frontend_* functions are provided by OBS itself when it loads the
+# plugin. In headless CI there is no linkable frontend-api library, so tell the
+# linker to leave those symbols undefined and resolve them dynamically at load.
+# This is the standard approach for OBS plugins on macOS; Windows is unaffected.
+if(APPLE)
+  target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -Wl,-undefined,dynamic_lookup)
+endif()
+# ---------------------------------------------------------------------------
+
 if(ENABLE_QT)
   find_package(Qt6 COMPONENTS Widgets Core)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets)
