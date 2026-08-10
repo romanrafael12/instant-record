@@ -6,8 +6,10 @@ jobs:
   windows:
     name: Build for Windows x64
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
-      - name: Check out repository 
+      - name: Check out repository
         uses: actions/checkout@v4
       - name: Detect Visual Studio generator
         id: vs
@@ -70,6 +72,19 @@ jobs:
           name: instant-record-installer
           path: installer\Output\*.exe
           if-no-files-found: warn
+
+      # ---- Publish the installer to a public 'latest' release ----
+      # Makes https://github.com/romanrafael12/instant-record/releases/latest/download/InstantRecord-Setup.exe
+      # always point at the newest installer (no login, never expires).
+      - name: Publish latest release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: Automatically built installer for the latest commit on main.
+          make_latest: true
+          files: installer/Output/InstantRecord-Setup.exe
 
       - name: Upload raw build (debug)
         if: always()
