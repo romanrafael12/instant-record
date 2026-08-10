@@ -95,17 +95,38 @@ static bool find_cam_item_cb(obs_scene_t *scene, obs_sceneitem_t *item, void *pa
 {
 	UNUSED_PARAMETER(scene);
 	struct find_cam *fc = param;
+	if (fc->found)
+		return false; /* already have one */
 
 	obs_source_t *src = obs_sceneitem_get_source(item);
 	if (!src)
 		return true; /* keep looking */
 
+	/* 1) Does this source itself carry the Instant Record filter? Works
+	 * for ANY source type — camera, media, browser — as long as it was
+	 * added to Instant Record. */
 	struct filter_probe probe = {0};
 	obs_source_enum_filters(src, probe_filter_cb, &probe);
 	if (probe.has_ir_filter) {
 		fc->found = obs_source_get_ref(src);
-		return false; /* stop: first camera wins */
+		return false; /* stop: first match wins */
 	}
+
+	/* 2) A group — look inside it (browser cams are often grouped). */
+	if (obs_sceneitem_is_group(item)) {
+		obs_sceneitem_group_enum_items(item, find_cam_item_cb, fc);
+		if (fc->found)
+			return false;
+	}
+
+	/* 3) A nested scene — look inside it too. */
+	obs_scene_t *sub = obs_scene_from_source(src);
+	if (sub) {
+		obs_scene_enum_items(sub, find_cam_item_cb, fc);
+		if (fc->found)
+			return false;
+	}
+
 	return true; /* keep looking */
 }
 

@@ -412,28 +412,33 @@ public:
 		 * followed right now, and a Stop button. */
 		cleanCard = new QFrame(this);
 		cleanCard->setObjectName("cleancard");
-		cleanCard->setStyleSheet("QFrame#cleancard{background:" IR_CARD
-					 ";border:2px solid " IR_BLUE ";border-radius:12px;}");
+		cleanCard->setStyleSheet("QFrame#cleancard{background:#101a26;border:1px solid " IR_BLUE
+					 ";border-radius:12px;}");
 		{
 			auto *cc = new QVBoxLayout(cleanCard);
-			cc->setContentsMargins(10, 8, 10, 10);
-			cc->setSpacing(6);
+			cc->setContentsMargins(12, 10, 12, 12);
+			cc->setSpacing(8);
 			auto *top = new QHBoxLayout();
-			auto *ttl = new QLabel(QStringLiteral("\xE2\x97\x8F ") + T("InstantRecord.Clean.Title"),
-					       cleanCard);
-			ttl->setStyleSheet(QString("color:%1;font-weight:800;font-size:12px;").arg(IR_RED));
+			top->setSpacing(8);
+			auto *recBadge = new QLabel(QStringLiteral("\xE2\x97\x8F REC"), cleanCard);
+			recBadge->setStyleSheet("background:" IR_RED ";color:#fff;font-weight:800;"
+						"font-size:10px;border-radius:8px;padding:2px 8px;");
+			auto *ttl = new QLabel(T("InstantRecord.Clean.Title"), cleanCard);
+			ttl->setStyleSheet("color:" IR_TEXT ";font-weight:700;font-size:12px;");
 			cleanTime = new QLabel(QStringLiteral("00:00:00"), cleanCard);
-			cleanTime->setStyleSheet("color:" IR_TEXT ";font-weight:700;");
+			cleanTime->setStyleSheet("color:" IR_BLUE ";font-weight:800;"
+						 "font-family:'Consolas','Menlo',monospace;");
+			top->addWidget(recBadge);
 			top->addWidget(ttl);
 			top->addStretch();
 			top->addWidget(cleanTime);
 			cc->addLayout(top);
 			cleanCam = new QLabel(cleanCard);
-			cleanCam->setStyleSheet("color:#9aa0a6;font-size:11px;");
+			cleanCam->setStyleSheet("font-size:11px;");
 			cc->addWidget(cleanCam);
 			auto *stopClean = new QPushButton(T("InstantRecord.Clean.Stop"), cleanCard);
 			stopClean->setStyleSheet("QPushButton{background:#1a1a1e;color:" IR_RED
-						 ";border:1px solid #3a2326;border-radius:10px;padding:5px 0;font-weight:700;}"
+						 ";border:1px solid #3a2326;border-radius:10px;padding:6px 0;font-weight:700;}"
 						 "QPushButton:hover{background:#241a1c;}");
 			connect(stopClean, &QPushButton::clicked, this, [] { clean_program_stop(); });
 			cc->addWidget(stopClean);
@@ -655,9 +660,11 @@ private:
 			/* Block removal while this camera is recording/buffering. */
 			c.del->setEnabled(!active);
 			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
-			/* Highlight the camera the clean program is on-air with. */
+			/* Highlight the on-air camera. Keep the SAME border width
+			 * as the default card (1px) so the layout never shifts —
+			 * only the colour + a soft tint change. */
 			bool onAir = cleanActive && c.name == cleanCamName;
-			c.w->setStyleSheet(onAir ? "QFrame{background:" IR_CARD ";border:2px solid " IR_BLUE
+			c.w->setStyleSheet(onAir ? "QFrame{background:#13233a;border:1px solid " IR_BLUE
 						   ";border-radius:12px;}"
 						 : "");
 		}
@@ -684,9 +691,15 @@ private:
 			long long cs = clean_program_elapsed_s();
 			cleanTime->setText(
 				QString::asprintf("%02lld:%02lld:%02lld", cs / 3600, (cs % 3600) / 60, cs % 60));
-			cleanCam->setText(cleanCamName.isEmpty()
-						  ? T("InstantRecord.Clean.NoCam")
-						  : T("InstantRecord.Clean.Now") + QStringLiteral(" ") + cleanCamName);
+			if (cleanCamName.isEmpty()) {
+				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") +
+						  T("InstantRecord.Clean.NoCam") + QStringLiteral("</span>"));
+			} else {
+				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") +
+						  T("InstantRecord.Clean.Now") +
+						  QStringLiteral("</span> <span style='color:#fff;font-weight:600'>") +
+						  cleanCamName.toHtmlEscaped() + QStringLiteral("</span>"));
+			}
 		}
 	}
 
