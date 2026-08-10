@@ -94,7 +94,7 @@ Instant Record is free and open source. If it saves you time, you can [**buy me 
 <p align="center"><sub>Brought to you by</sub></p>
 <p align="center">
   <a href="https://instanrp.com">
-    <img width="180" alt="Instant Replay" src="PEGA_AQUI_EL_LINK_DEL_LOGO"/>
+    <img width="360" alt="Instant Replay" src="https://instanrp.com/image.png"/>
   </a>
 </p>
 <p align="center"><a href="https://instanrp.com"><b>instanrp.com</b></a></p>
