@@ -1,11 +1,3 @@
-
-
-https://github.com/user-attachments/assets/3016b7fb-eaf1-4494-9466-2c09c02506f9
-
-
-
-
-
 <p align="center"><sub>From the makers of <a href="https://instanrp.com"><b>Instant Replay</b></a></sub></p>
 
 <h1 align="center">Instant Record</h1>
@@ -70,6 +62,16 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
 - It follows the camera by looking inside each scene for the source that carries the Instant Record filter, so the cameras you already added just work. On scenes with no clear camera (PiP, replay, playlists) it keeps the last camera, so the file never goes black.
 - Each camera fills the whole frame (the clean camera feed), regardless of how it's scaled or placed in your scene.
 - Only one recording mode runs at a time per camera; Clean Program is its own separate recording and can run alongside your per-camera setup.
+
+<!-- ▼▼▼ VIDEO DEL CLEAN PROGRAM ▼▼▼
+     Para poner el video: edita este README en GitHub, ARRASTRA tu .mp4
+     a la caja de texto justo en la línea de abajo, y GitHub lo convierte
+     en un reproductor. Borra este comentario y el texto de placeholder.
+     (mp4, máx 10 MB. NO funciona con rutas del repo, solo arrastrando.) -->
+
+_(Clean Program demo video goes here — drag your .mp4 onto this line when editing on GitHub.)_
+
+<!-- ▲▲▲ VIDEO DEL CLEAN PROGRAM ▲▲▲ -->
 
 ## Encoders that work
 
