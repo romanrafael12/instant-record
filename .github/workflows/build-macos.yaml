@@ -2,6 +2,8 @@ name: Build macOS
 
 # Unsigned macOS build (Universal: arm64 + x86_64) to verify the plugin
 # compiles and loads. Signing/notarization is added later.
+# OBS requires the macOS 15 SDK (Xcode 16), so we run on macos-15 and
+# select an Xcode 16.x toolchain explicitly.
 
 on:
   push:
@@ -10,10 +12,18 @@ on:
 jobs:
   macos:
     name: Build for macOS (Universal, unsigned)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          ls /Applications | grep -i Xcode || true
+          sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer || \
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          echo "SDKs:"; xcodebuild -showsdks | grep -i macos || true
 
       - name: Configure
         run: cmake --preset macos
