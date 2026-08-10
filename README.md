@@ -7,6 +7,14 @@ by [Instant Replay](https://instanrp.com)
 
 Instant Record records **each camera to its own file** and keeps a **per-camera replay buffer**, so you can grab a clip of every angle the instant something happens. Built for live multi-camera work by **[Instant Replay](https://instanrp.com)**.
 
+## Download
+
+[![Latest release](https://img.shields.io/github/v/release/romanrafael12/instant-record?label=latest&color=e0403a)](https://github.com/romanrafael12/instant-record/releases/latest)
+
+**➡ [Download the Windows installer](https://github.com/romanrafael12/instant-record/releases/latest/download/InstantRecord-Setup.exe)** — run it and it installs the plugin into OBS for you.
+
+Prefer the manual zip, or looking for other versions? See the **[Releases page](https://github.com/romanrafael12/instant-record/releases/latest)**.
+
 ## Screenshots
 
 <p align="center">
