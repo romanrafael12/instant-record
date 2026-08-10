@@ -19,6 +19,13 @@ target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
 if(ENABLE_FRONTEND_API)
   find_package(obs-frontend-api REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::obs-frontend-api)
+  # On macOS the OBS sources are built with the frontend disabled, so OBS 31.x
+  # produces the obs-frontend-api library but does not install its public header.
+  # Provide a vendored copy of the OBS 31.1.1 header on macOS only. Windows is
+  # unaffected: it links against a prebuilt OBS that ships the header.
+  if(APPLE)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/obs-frontend")
+  endif()
 endif()
 
 if(ENABLE_QT)
