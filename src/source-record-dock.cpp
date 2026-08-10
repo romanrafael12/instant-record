@@ -427,7 +427,9 @@ public:
 		scroll->setFrameShape(QFrame::NoFrame);
 		auto *scrollContent = new QWidget();
 		scrollContent->setObjectName("scrollcontent");
-		cardsFlow = new FlowLayout(scrollContent, 8);
+		cardsBox = new QVBoxLayout(scrollContent);
+		cardsBox->setContentsMargins(0, 0, 0, 0);
+		cardsBox->setSpacing(6);
 		scroll->setWidget(scrollContent);
 		root->addWidget(scroll, 1); /* stretch: takes the free space */
 
@@ -447,26 +449,9 @@ public:
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveBuffer"), this);
 		saveAll->setObjectName("save");
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
-		/* Card-size control: Compact / Normal / Large. */
-		sizeS = new QPushButton(QStringLiteral("S"), this);
-		sizeM = new QPushButton(QStringLiteral("M"), this);
-		sizeL = new QPushButton(QStringLiteral("L"), this);
-		for (QPushButton *b : {sizeS, sizeM, sizeL}) {
-			b->setObjectName("sizebtn");
-			b->setFixedWidth(28);
-			b->setCheckable(true);
-			b->setCursor(Qt::PointingHandCursor);
-		}
-		sizeS->setToolTip(T("InstantRecord.Dock.SizeCompact"));
-		sizeM->setToolTip(T("InstantRecord.Dock.SizeNormal"));
-		sizeL->setToolTip(T("InstantRecord.Dock.SizeLarge"));
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
-		btns->addSpacing(8);
-		btns->addWidget(sizeS);
-		btns->addWidget(sizeM);
-		btns->addWidget(sizeL);
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
@@ -476,11 +461,6 @@ public:
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
 		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
-		connect(sizeS, &QPushButton::clicked, this, [this] { setCardSize(0); });
-		connect(sizeM, &QPushButton::clicked, this, [this] { setCardSize(1); });
-		connect(sizeL, &QPushButton::clicked, this, [this] { setCardSize(2); });
-		cardW = load_card_size(); /* remembered choice, default Normal */
-		applySizeButtons();
 
 		auto *timer = new QTimer(this);
 		connect(timer, &QTimer::timeout, this, [this] { refresh(); });
@@ -489,60 +469,13 @@ public:
 	}
 
 private:
-	FlowLayout *cardsFlow;
+	QVBoxLayout *cardsBox;
 	QLabel *counters;
 	QLabel *emptyHint;
 	QPushButton *startAll;
-	QPushButton *sizeS;
-	QPushButton *sizeM;
-	QPushButton *sizeL;
-	int cardW = 250; /* card width in px; set by the size buttons */
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
-
-	/* Card-size presets: Compact / Normal / Large (px width). */
-	int sizeToWidth(int idx) const { return idx == 0 ? 200 : (idx == 2 ? 330 : 250); }
-	int widthToSize() const { return cardW <= 200 ? 0 : (cardW >= 330 ? 2 : 1); }
-
-	void applySizeButtons()
-	{
-		int s = widthToSize();
-		sizeS->setChecked(s == 0);
-		sizeM->setChecked(s == 1);
-		sizeL->setChecked(s == 2);
-	}
-
-	void setCardSize(int idx)
-	{
-		cardW = sizeToWidth(idx);
-		applySizeButtons();
-		save_card_size(idx);
-		lastSig.clear(); /* force a rebuild with the new width */
-		refresh();
-	}
-
-	int load_card_size()
-	{
-		int idx = 1;
-		obs_data_t *d = obs_data_create_from_json_file(sr_cfg_file().c_str());
-		if (d) {
-			if (obs_data_has_user_value(d, "card_size"))
-				idx = (int)obs_data_get_int(d, "card_size");
-			obs_data_release(d);
-		}
-		return sizeToWidth(idx);
-	}
-
-	void save_card_size(int idx)
-	{
-		obs_data_t *d = obs_data_create_from_json_file(sr_cfg_file().c_str());
-		if (!d)
-			d = obs_data_create();
-		obs_data_set_int(d, "card_size", idx);
-		obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
-		obs_data_release(d);
-	}
 
 	void rebuildCards(struct sr_status_row *rows, size_t n)
 	{
@@ -550,15 +483,17 @@ private:
 			c.w->deleteLater();
 		cards.clear();
 		QLayoutItem *item;
-		while ((item = cardsFlow->takeAt(0)) != nullptr)
+		while ((item = cardsBox->takeAt(0)) != nullptr) {
+			if (item->widget())
+				item->widget()->deleteLater();
 			delete item;
+		}
 
 		for (int i = 0; i < (int)n; i++) {
 			auto *card = new QFrame();
 			card->setObjectName("card");
-			card->setFixedWidth(cardW);
 			auto *cl = new QHBoxLayout(card);
-			cl->setContentsMargins(12, 10, 12, 10);
+			cl->setContentsMargins(12, 8, 10, 8);
 			cl->setSpacing(8);
 
 			auto *dot = new QLabel(QStringLiteral("\xE2\x97\x8F"));
@@ -571,8 +506,10 @@ private:
 			nm->setStyleSheet("font-weight:600;");
 			auto *stt = new QLabel();
 			stt->setStyleSheet("font-weight:800;");
+			stt->setAlignment(Qt::AlignRight);
 			auto *tm = new QLabel();
 			tm->setStyleSheet("color:#c9d0d6;");
+			tm->setAlignment(Qt::AlignRight);
 			auto *clip = new QPushButton(T("InstantRecord.Dock.Save"));
 			clip->setObjectName("clip");
 			int idx = i;
@@ -591,16 +528,21 @@ private:
 			cl->addWidget(dot);
 			cl->addWidget(nm);
 			cl->addStretch();
-			cl->addWidget(stt);
-			cl->addSpacing(6);
-			cl->addWidget(tm);
-			cl->addSpacing(6);
+			/* Time on top, BUF/REC status right below it. */
+			auto *tsCol = new QVBoxLayout();
+			tsCol->setSpacing(1);
+			tsCol->setContentsMargins(0, 0, 0, 0);
+			tsCol->addWidget(tm);
+			tsCol->addWidget(stt);
+			cl->addLayout(tsCol);
+			cl->addSpacing(8);
 			cl->addWidget(clip);
 			cl->addWidget(del);
 
-			cardsFlow->addWidget(card);
+			cardsBox->addWidget(card);
 			cards.push_back({card, dot, nm, stt, tm, clip, del, QString::fromUtf8(rows[i].name), i});
 		}
+		cardsBox->addStretch(); /* keep cards packed at the top */
 		emptyHint->setVisible(n == 0);
 	}
 
