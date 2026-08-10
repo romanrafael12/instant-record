@@ -821,14 +821,17 @@ static bool start_file_output_locked(struct source_record_filter *f)
 
 static void stop_file_output_locked(struct source_record_filter *f)
 {
-	if (f->fileOutput && f->active)
-		obs_output_stop(f->fileOutput);
 	f->active = false;
 	if (f->current_filepath) {
 		write_sidecar(f, true, os_gettime_ns()); /* final entry: stop + duration */
 		bfree(f->current_filepath);
 		f->current_filepath = NULL;
 	}
+	/* Do NOT obs_output_stop() here: release_chain_locked releases the
+	 * outputs via obs_output_release(), which force-stops them and WAITS
+	 * for their threads. Calling obs_output_stop() first starts an async
+	 * stop that then double-stops during destroy — the replay_buffer's
+	 * thread crashes on that. One stop only. */
 	release_chain_locked(f);
 	if (f->status == SR_STATUS_RECORDING)
 		f->status = SR_STATUS_IDLE;
