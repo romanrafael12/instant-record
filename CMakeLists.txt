@@ -34,7 +34,7 @@ if(ENABLE_QT)
   )
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c src/source-record-filter.c src/source-record-dock.cpp)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c src/source-record-filter.c src/source-record-dock.cpp src/clean-program.c)
 
 if(ENABLE_FRONTEND_API)
   target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ENABLE_FRONTEND_API)
