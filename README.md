@@ -24,14 +24,18 @@ Other versions and the manual zip are on the **[Releases page](https://github.co
 ## Screenshots
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/13895466-3261-464e-accd-d8e209055455" width="70%" alt="Instant Record dock — one card per camera with replay buffer"/>
+ <img width="263" height="311" alt="image" src="https://github.com/user-attachments/assets/6ac442b0-f0d1-49cf-9753-04853889d993"  width="70%" alt="Instant Record dock — one card per camera with replay buffer"/>
   <br/><em>The dock — one card per camera, with a per-camera replay buffer.</em>
 </p>
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/776bd587-a491-4130-83de-01d20daa0d7c" width="70%" alt="Config — apply to all cameras"/>
+  <img src="https://github.com/user-attachments/assets/a993443d-81c0-44df-91cb-c529da3ae7f1" width="70%" alt="Config — apply to all cameras"/>
+  <img width="276" height="55" alt="image" src="https://github.com/user-attachments/assets/2ee87cf9-8077-499a-a0f0-f21c06ae1e82" />
+
   <br/><em>Config — set encoder, container, resolution and buffer once, apply to every camera.</em>
 </p>
+
+
 
 ## Install (Windows)
 
