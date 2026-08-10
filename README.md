@@ -1,3 +1,5 @@
+<p align="center"><sub>From the makers of <b>Instant Replay</b></sub></p>
+
 <h1 align="center">Instant Record</h1>
 
 <p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b></p>
