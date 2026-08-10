@@ -54,6 +54,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMap>
 #include <QVariant>
 #include <QGraphicsDropShadowEffect>
+#include <QScrollArea>
+#include <QLayout>
+#include <QStyle>
+#include <QList>
+#include <QRect>
+#include <QMargins>
 
 /* Instant Replay brand palette (from the app UI). */
 #define IR_BG "#0b0b0d"
@@ -257,6 +263,68 @@ static QString sr_resolve_auto_encoder()
 	return "obs_x264";
 }
 
+/* Wraps child widgets to as many columns as fit the current width, so
+ * the camera grid adapts to how wide the dock is. Based on the classic
+ * Qt FlowLayout example (no Q_OBJECT needed). */
+class FlowLayout : public QLayout {
+public:
+	explicit FlowLayout(QWidget *parent = nullptr, int spacing = 8) : QLayout(parent), m_space(spacing)
+	{
+		setContentsMargins(0, 0, 0, 0);
+	}
+	~FlowLayout() override
+	{
+		QLayoutItem *item;
+		while ((item = takeAt(0)))
+			delete item;
+	}
+	void addItem(QLayoutItem *item) override { itemList.append(item); }
+	int count() const override { return (int)itemList.size(); }
+	QLayoutItem *itemAt(int i) const override { return itemList.value(i); }
+	QLayoutItem *takeAt(int i) override
+	{
+		return (i >= 0 && i < itemList.size()) ? itemList.takeAt(i) : nullptr;
+	}
+	Qt::Orientations expandingDirections() const override { return {}; }
+	bool hasHeightForWidth() const override { return true; }
+	int heightForWidth(int w) const override { return doLayout(QRect(0, 0, w, 0), true); }
+	void setGeometry(const QRect &r) override
+	{
+		QLayout::setGeometry(r);
+		doLayout(r, false);
+	}
+	QSize sizeHint() const override { return minimumSize(); }
+	QSize minimumSize() const override
+	{
+		QSize s;
+		for (QLayoutItem *item : itemList)
+			s = s.expandedTo(item->minimumSize());
+		return s;
+	}
+
+private:
+	int doLayout(const QRect &rect, bool testOnly) const
+	{
+		int x = rect.x(), y = rect.y(), lineHeight = 0;
+		for (QLayoutItem *item : itemList) {
+			int nextX = x + item->sizeHint().width() + m_space;
+			if (nextX - m_space > rect.right() && lineHeight > 0) {
+				x = rect.x();
+				y = y + lineHeight + m_space;
+				nextX = x + item->sizeHint().width() + m_space;
+				lineHeight = 0;
+			}
+			if (!testOnly)
+				item->setGeometry(QRect(QPoint(x, y), item->sizeHint()));
+			x = nextX;
+			lineHeight = qMax(lineHeight, item->sizeHint().height());
+		}
+		return y + lineHeight - rect.y();
+	}
+	QList<QLayoutItem *> itemList;
+	int m_space;
+};
+
 struct Card {
 	QFrame *w;
 	QLabel *dot;
@@ -295,6 +363,10 @@ public:
 			"QPushButton#clip{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;border-radius:12px;padding:4px 14px;}"
 			"QPushButton#del{background:transparent;border:none;color:#5a5f65;font-weight:800;padding:2px 6px;}"
 			"QPushButton#del:hover{color:" IR_RED ";}"
+			"QScrollArea#cardscroll{background:transparent;border:none;}"
+			"QWidget#scrollcontent{background:transparent;}"
+			"QPushButton#sizebtn{background:#1a1a1e;color:#9aa0a6;border:1px solid #2e2e34;border-radius:8px;padding:4px 0;font-weight:800;}"
+			"QPushButton#sizebtn:checked{background:" IR_PURPLE ";color:#fff;border:none;}"
 			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}");
 
 		auto *root = new QVBoxLayout(this);
@@ -345,9 +417,19 @@ public:
 				QUrl("https://github.com/romanrafael12/instant-record/releases/latest"));
 		});
 
-		cardsBox = new QVBoxLayout();
-		cardsBox->setSpacing(6);
-		root->addLayout(cardsBox);
+		/* Scrollable, width-adaptive grid of camera cards. Lives in a
+		 * scroll area so many cameras never push the header or the
+		 * bottom bar off-screen. */
+		auto *scroll = new QScrollArea(this);
+		scroll->setObjectName("cardscroll");
+		scroll->setWidgetResizable(true);
+		scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		scroll->setFrameShape(QFrame::NoFrame);
+		auto *scrollContent = new QWidget();
+		scrollContent->setObjectName("scrollcontent");
+		cardsFlow = new FlowLayout(scrollContent, 8);
+		scroll->setWidget(scrollContent);
+		root->addWidget(scroll, 1); /* stretch: takes the free space */
 
 		/* Empty-state hint. */
 		emptyHint = new QLabel(T("InstantRecord.Dock.EmptyHint"), this);
@@ -355,7 +437,6 @@ public:
 		emptyHint->setAlignment(Qt::AlignCenter);
 		emptyHint->setWordWrap(true);
 		root->addWidget(emptyHint);
-		root->addStretch();
 		setAcceptDrops(true); /* drag a source from OBS onto the dock */
 
 		/* Bottom action bar. */
@@ -366,9 +447,26 @@ public:
 		auto *saveAll = new QPushButton(T("InstantRecord.Dock.SaveBuffer"), this);
 		saveAll->setObjectName("save");
 		auto *config = new QPushButton(T("InstantRecord.Dock.GlobalConfig"), this);
+		/* Card-size control: Compact / Normal / Large. */
+		sizeS = new QPushButton(QStringLiteral("S"), this);
+		sizeM = new QPushButton(QStringLiteral("M"), this);
+		sizeL = new QPushButton(QStringLiteral("L"), this);
+		for (QPushButton *b : {sizeS, sizeM, sizeL}) {
+			b->setObjectName("sizebtn");
+			b->setFixedWidth(28);
+			b->setCheckable(true);
+			b->setCursor(Qt::PointingHandCursor);
+		}
+		sizeS->setToolTip(T("InstantRecord.Dock.SizeCompact"));
+		sizeM->setToolTip(T("InstantRecord.Dock.SizeNormal"));
+		sizeL->setToolTip(T("InstantRecord.Dock.SizeLarge"));
 		btns->addWidget(startAll);
 		btns->addWidget(stopAll);
 		btns->addWidget(saveAll);
+		btns->addSpacing(8);
+		btns->addWidget(sizeS);
+		btns->addWidget(sizeM);
+		btns->addWidget(sizeL);
 		btns->addStretch();
 		btns->addWidget(config);
 		root->addLayout(btns);
@@ -378,6 +476,11 @@ public:
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
 		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
+		connect(sizeS, &QPushButton::clicked, this, [this] { setCardSize(0); });
+		connect(sizeM, &QPushButton::clicked, this, [this] { setCardSize(1); });
+		connect(sizeL, &QPushButton::clicked, this, [this] { setCardSize(2); });
+		cardW = load_card_size(); /* remembered choice, default Normal */
+		applySizeButtons();
 
 		auto *timer = new QTimer(this);
 		connect(timer, &QTimer::timeout, this, [this] { refresh(); });
@@ -386,13 +489,60 @@ public:
 	}
 
 private:
-	QVBoxLayout *cardsBox;
+	FlowLayout *cardsFlow;
 	QLabel *counters;
 	QLabel *emptyHint;
 	QPushButton *startAll;
+	QPushButton *sizeS;
+	QPushButton *sizeM;
+	QPushButton *sizeL;
+	int cardW = 250; /* card width in px; set by the size buttons */
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
+
+	/* Card-size presets: Compact / Normal / Large (px width). */
+	int sizeToWidth(int idx) const { return idx == 0 ? 200 : (idx == 2 ? 330 : 250); }
+	int widthToSize() const { return cardW <= 200 ? 0 : (cardW >= 330 ? 2 : 1); }
+
+	void applySizeButtons()
+	{
+		int s = widthToSize();
+		sizeS->setChecked(s == 0);
+		sizeM->setChecked(s == 1);
+		sizeL->setChecked(s == 2);
+	}
+
+	void setCardSize(int idx)
+	{
+		cardW = sizeToWidth(idx);
+		applySizeButtons();
+		save_card_size(idx);
+		lastSig.clear(); /* force a rebuild with the new width */
+		refresh();
+	}
+
+	int load_card_size()
+	{
+		int idx = 1;
+		obs_data_t *d = obs_data_create_from_json_file(sr_cfg_file().c_str());
+		if (d) {
+			if (obs_data_has_user_value(d, "card_size"))
+				idx = (int)obs_data_get_int(d, "card_size");
+			obs_data_release(d);
+		}
+		return sizeToWidth(idx);
+	}
+
+	void save_card_size(int idx)
+	{
+		obs_data_t *d = obs_data_create_from_json_file(sr_cfg_file().c_str());
+		if (!d)
+			d = obs_data_create();
+		obs_data_set_int(d, "card_size", idx);
+		obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
+		obs_data_release(d);
+	}
 
 	void rebuildCards(struct sr_status_row *rows, size_t n)
 	{
@@ -400,12 +550,13 @@ private:
 			c.w->deleteLater();
 		cards.clear();
 		QLayoutItem *item;
-		while ((item = cardsBox->takeAt(0)) != nullptr)
+		while ((item = cardsFlow->takeAt(0)) != nullptr)
 			delete item;
 
 		for (int i = 0; i < (int)n; i++) {
 			auto *card = new QFrame();
 			card->setObjectName("card");
+			card->setFixedWidth(cardW);
 			auto *cl = new QHBoxLayout(card);
 			cl->setContentsMargins(12, 10, 12, 10);
 			cl->setSpacing(8);
@@ -447,9 +598,10 @@ private:
 			cl->addWidget(clip);
 			cl->addWidget(del);
 
-			cardsBox->addWidget(card);
+			cardsFlow->addWidget(card);
 			cards.push_back({card, dot, nm, stt, tm, clip, del, QString::fromUtf8(rows[i].name), i});
 		}
+		emptyHint->setVisible(n == 0);
 	}
 
 	void refresh()
