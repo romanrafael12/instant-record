@@ -91,6 +91,7 @@ static void registry_remove(struct source_record_filter *f)
 
 /* Forward decls. */
 static void stop_file_output_locked(struct source_record_filter *f);
+static void teardown_now_locked(struct source_record_filter *f);
 static void on_output_stopped(void *data, calldata_t *cd);
 
 void sr_registry_stop_all(void)
@@ -819,20 +820,44 @@ static bool start_file_output_locked(struct source_record_filter *f)
 	return ok;
 }
 
-static void stop_file_output_locked(struct source_record_filter *f)
+/* SYNCHRONOUS full teardown: write the final sidecar, then release the
+ * whole chain (obs_output_release force-stops + WAITS for the output
+ * thread, then encoders + isolated view are freed). This BLOCKS, so it
+ * must only run where that's safe: on the graphics thread (video_tick),
+ * on OBS exit, or in destroy — never on the UI thread while the graphics
+ * thread is live, or the two deadlock. */
+static void teardown_now_locked(struct source_record_filter *f)
 {
 	f->active = false;
 	if (f->current_filepath) {
-		write_sidecar(f, true, os_gettime_ns()); /* final entry: stop + duration */
+		write_sidecar(f, true, os_gettime_ns());
 		bfree(f->current_filepath);
 		f->current_filepath = NULL;
 	}
-	/* Do NOT obs_output_stop() here: release_chain_locked releases the
-	 * outputs via obs_output_release(), which force-stops them and WAITS
-	 * for their threads. Calling obs_output_stop() first starts an async
-	 * stop that then double-stops during destroy — the replay_buffer's
-	 * thread crashes on that. One stop only. */
 	release_chain_locked(f);
+	if (f->status == SR_STATUS_RECORDING)
+		f->status = SR_STATUS_IDLE;
+}
+
+/* LIVE stop (Stop-all button, hotkey, main-recording-stopped): only
+ * REQUESTS an async stop and returns immediately — it never blocks the
+ * calling (UI) thread. The output's "stop" signal sets need_teardown, and
+ * video_tick does the blocking release + view destroy on the graphics
+ * thread, where it's safe. */
+static void stop_file_output_locked(struct source_record_filter *f)
+{
+	if (!f->fileOutput || !f->active) {
+		/* Nothing running → no stop signal will come; finalize now. */
+		teardown_now_locked(f);
+		return;
+	}
+	f->active = false;
+	if (f->current_filepath) {
+		write_sidecar(f, true, os_gettime_ns());
+		bfree(f->current_filepath);
+		f->current_filepath = NULL;
+	}
+	obs_output_stop(f->fileOutput); /* async; stop signal → need_teardown → video_tick */
 	if (f->status == SR_STATUS_RECORDING)
 		f->status = SR_STATUS_IDLE;
 }
@@ -849,8 +874,7 @@ static void frontend_event(enum obs_frontend_event event, void *data)
 	struct source_record_filter *f = data;
 	if (event == OBS_FRONTEND_EVENT_EXIT) {
 		pthread_mutex_lock(&f->mutex);
-		if (f->active)
-			stop_file_output_locked(f);
+		teardown_now_locked(f); /* shutting down: finalize synchronously */
 		pthread_mutex_unlock(&f->mutex);
 		return;
 	}
@@ -985,7 +1009,7 @@ static void sr_destroy(void *data)
 		obs_hotkey_unregister(f->save_hotkey);
 
 	pthread_mutex_lock(&f->mutex);
-	stop_file_output_locked(f);
+	teardown_now_locked(f); /* filter going away: finalize synchronously */
 	pthread_mutex_unlock(&f->mutex);
 
 	pthread_mutex_destroy(&f->mutex);
@@ -1011,7 +1035,7 @@ static void sr_video_tick(void *data, float seconds)
 		f->need_teardown = false;
 		bool restart = f->restart_after;
 		f->restart_after = false;
-		stop_file_output_locked(f);
+		teardown_now_locked(f); /* graphics thread: safe to block-release here */
 		if (restart && parent)
 			start_file_output_locked(f);
 		pthread_mutex_unlock(&f->mutex);
@@ -1053,7 +1077,7 @@ static void sr_video_tick(void *data, float seconds)
 		obs_log(LOG_INFO, "[instant-record] resolution %ux%u -> %ux%u, cycling", f->width, f->height, w,
 			h);
 		enum sr_record_mode mode = f->record_mode;
-		stop_file_output_locked(f);
+		teardown_now_locked(f); /* graphics thread */
 		if (mode == SR_MODE_ALWAYS || mode == SR_MODE_WITH_MAIN)
 			start_file_output_locked(f);
 	}
