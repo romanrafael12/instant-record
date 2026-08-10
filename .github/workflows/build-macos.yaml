@@ -1,0 +1,44 @@
+name: Build macOS
+
+# Unsigned macOS build (Universal: arm64 + x86_64) to verify the plugin
+# compiles and loads. Signing/notarization is added later.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: Build for macOS (Universal, unsigned)
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake --preset macos
+
+      - name: Build
+        run: cmake --build --preset macos
+
+      - name: Assemble plugin
+        run: >
+          cmake --install build_macos
+          --prefix "${{ github.workspace }}/release_macos"
+          --config RelWithDebInfo
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-macos-universal
+          path: release_macos/**
+          if-no-files-found: warn
+
+      - name: Upload raw build (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-record-macos-raw
+          path: |
+            build_macos/**/*.plugin
+          if-no-files-found: ignore
