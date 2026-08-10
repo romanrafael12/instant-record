@@ -1,4 +1,4 @@
-<p align="center"><sub>From the makers of <b>Instant Replay</b></sub></p>
+<p align="center"><sub>From the makers of <a href="https://instanrp.com"><b>Instant Replay</b></a></sub></p>
 
 <h1 align="center">Instant Record</h1>
 
@@ -88,6 +88,16 @@ Instant Record is free and open source. If it saves you time, you can [**buy me 
     <img src="https://img.shields.io/badge/%E2%98%95%20Buy%20me%20a%20coffee-f5c04a?style=for-the-badge&logoColor=black" alt="Buy me a coffee"/>
   </a>
 </p>
+
+---
+
+<p align="center"><sub>Brought to you by</sub></p>
+<p align="center">
+  <a href="https://instanrp.com">
+    <img width="180" alt="Instant Replay" src="PEGA_AQUI_EL_LINK_DEL_LOGO"/>
+  </a>
+</p>
+<p align="center"><a href="https://instanrp.com"><b>instanrp.com</b></a></p>
 
 ## License
 
