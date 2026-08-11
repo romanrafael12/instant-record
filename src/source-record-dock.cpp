@@ -399,7 +399,7 @@ public:
 		counters = new QLabel(this);
 		counters->setStyleSheet("font-size:11px;font-weight:700;");
 		header->addWidget(counters);
-		auto *addTop = new QPushButton(QStringLiteral("\xEF\xBC\x8B"), this); /* ＋ */
+		auto *addTop = new QPushButton(QString::fromUtf8("\xEF\xBC\x8B"), this); /* ＋ */
 		addTop->setObjectName("addtop");
 		addTop->setToolTip(T("InstantRecord.Dock.AddCams"));
 		addTop->setFixedSize(28, 28);
@@ -420,7 +420,7 @@ public:
 			cc->setSpacing(8);
 			auto *top = new QHBoxLayout();
 			top->setSpacing(8);
-			auto *recBadge = new QLabel(QStringLiteral("\xE2\x97\x8F REC"), cleanCard);
+			auto *recBadge = new QLabel(QString::fromUtf8("\xE2\x97\x8F REC"), cleanCard);
 			recBadge->setStyleSheet("background:" IR_RED ";color:#fff;font-weight:800;"
 						"font-size:10px;border-radius:8px;padding:2px 8px;");
 			auto *ttl = new QLabel(T("InstantRecord.Clean.Title"), cleanCard);
@@ -544,7 +544,7 @@ private:
 			cl->setContentsMargins(12, 8, 10, 8);
 			cl->setSpacing(8);
 
-			auto *dot = new QLabel(QStringLiteral("\xE2\x97\x8F"));
+			auto *dot = new QLabel(QString::fromUtf8("\xE2\x97\x8F"));
 			dot->setStyleSheet("font-size:14px;");
 			auto *nm = new QLabel(QString("%1\n%2x%3 \xC2\xB7 %4")
 						      .arg(rows[i].name)
@@ -563,7 +563,7 @@ private:
 			int idx = i;
 			connect(clip, &QPushButton::clicked, clip, [idx] { sr_registry_save_index((size_t)idx); });
 
-			auto *del = new QPushButton(QStringLiteral("\xE2\x9C\x95")); /* ✕ */
+			auto *del = new QPushButton(QString::fromUtf8("\xE2\x9C\x95")); /* ✕ */
 			del->setObjectName("del");
 			del->setToolTip(T("InstantRecord.Dock.Remove"));
 			QString srcName = QString::fromUtf8(rows[i].name);
@@ -621,7 +621,7 @@ private:
 			switch (rows[i].status) {
 			case SR_STATUS_RECORDING:
 				if (rows[i].use_buffer) {
-					st = QStringLiteral("\xE2\x97\x8F BUF");
+					st = QString::fromUtf8("\xE2\x97\x8F BUF");
 					colName = IR_GOLD;
 					buf++;
 				} else {
