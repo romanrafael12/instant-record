@@ -2,7 +2,7 @@
 
 <h1 align="center">Instant Record</h1>
 
-<p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows)</b></p>
+<p align="center"><b>Per-source (ISO) multi-camera recording &amp; replay for OBS Studio (Windows &amp; macOS)</b></p>
 
 ---
 
@@ -15,11 +15,16 @@ Instant Record gives **each camera its own recording** — either a continuous I
 <a href="https://github.com/romanrafael12/instant-record/releases/latest/download/InstantRecord-Setup.exe">
   <img src="https://img.shields.io/badge/Download-Windows%20Installer-e0403a?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows Installer"/>
 </a>
+&nbsp;
+<a href="https://github.com/romanrafael12/instant-record/releases/latest/download/instant-record-macOS.zip">
+  <img src="https://img.shields.io/badge/Download-macOS%20(Universal)-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS (Universal)"/>
+</a>
 
 [![Latest release](https://img.shields.io/github/v/release/romanrafael12/instant-record?label=version&color=f5c04a&style=flat-square)](https://github.com/romanrafael12/instant-record/releases/latest)
 
-Downloads the installer directly — run it and it sets up the plugin in OBS for you.  
-Other versions and the manual zip are on the **[Releases page](https://github.com/romanrafael12/instant-record/releases/latest)**.
+**Windows** — the installer sets up the plugin in OBS for you, just run it.  
+**macOS** — universal (Apple Silicon + Intel); unzip and drop the plugin into your OBS plugins folder (see **[Install (macOS)](#install-macos)**).  
+Other versions and manual downloads are on the **[Releases page](https://github.com/romanrafael12/instant-record/releases/latest)**.
 
 </div>
 
@@ -51,6 +56,22 @@ https://github.com/user-attachments/assets/c88f3c3e-6ecc-4f2d-9ca3-9b81aac5a1ea
 2. **Close OBS.**
 3. Run the installer (or, for the manual zip, copy the `bin` and `data` folders into `C:\ProgramData\obs-studio\plugins\instant-record\`).
 4. Open OBS. You'll see the **Instant Record** dock, and the **Instant Record (Source)** filter on any source's Filters.
+
+## Install (macOS)
+
+The macOS build is **universal (Apple Silicon + Intel)** and unsigned.
+
+1. Download **`instant-record-macOS.zip`** from the [Releases page](https://github.com/romanrafael12/instant-record/releases/latest), or build it yourself from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab.
+2. **Close OBS.**
+3. Unzip it — you'll get **`instant-record.plugin`**.
+4. Move `instant-record.plugin` into `~/Library/Application Support/obs-studio/plugins/` (create the `plugins` folder if it isn't there). Replace the old one if you're updating.
+5. Because the plugin is unsigned, clear the macOS download quarantine so OBS will load it — open **Terminal** and run:
+   ```
+   xattr -dr com.apple.quarantine ~/Library/Application\ Support/obs-studio/plugins/instant-record.plugin
+   ```
+6. Open OBS. You'll see the **Instant Record** dock, and the **Instant Record (Source)** filter on any source's Filters.
+
+> Clean Program uses Apple's **VideoToolbox hardware encoder** automatically on macOS, so it won't bottleneck your CPU during a live show.
 
 ## Configure
 
@@ -87,6 +108,7 @@ _(Clean Program demo video goes here — drag your .mp4 onto this line when edit
 
 - **Auto (recommended)** — picks the best hardware encoder on your PC (NVENC → AMF → QuickSync → x264) and avoids the one your stream is using when possible.
 - **NVIDIA NVENC H.264** — hardware encoding, barely touches the CPU, edits cleanly everywhere.
+- **Apple VideoToolbox (macOS)** — hardware H.264 on Apple Silicon/Intel; used automatically for Clean Program on Mac.
 - **x264** — good fallback (uses CPU).
 - Avoid **SVT-AV1** for live recording — it's software AV1 and spikes the CPU.
 - **Container:** mkv (crash-safe) or **Hybrid MP4** (crash-safe *and* editable without remux). Backup cameras: cap at **720p** / **half** frame rate.
