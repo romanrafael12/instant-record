@@ -13,6 +13,8 @@ jobs:
   macos:
     name: Build for macOS (Universal, unsigned)
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -52,3 +54,26 @@ jobs:
           path: |
             build_macos/**/*.plugin
           if-no-files-found: ignore
+
+      # ---- Package the .plugin bundle into a single zip for Releases -------
+      # ditto is the macOS-native tool: it preserves the bundle structure,
+      # symlinks and resource forks, and --keepParent makes the zip root the
+      # instant-record.plugin folder, so unzipping gives the bundle directly.
+      - name: Zip plugin for release
+        run: |
+          PLUGIN="$(find "${{ github.workspace }}/release_macos" -maxdepth 4 -name '*.plugin' -type d | head -1)"
+          if [ -z "$PLUGIN" ]; then
+            echo "No .plugin bundle found under release_macos:"; ls -R "${{ github.workspace }}/release_macos"; exit 1
+          fi
+          echo "Packaging $PLUGIN"
+          ditto -c -k --sequesterRsrc --keepParent "$PLUGIN" "${{ github.workspace }}/instant-record-macOS.zip"
+          ls -lh "${{ github.workspace }}/instant-record-macOS.zip"
+
+      # ---- Publish the zip to the shared "latest" release -----------------
+      # Same release Windows publishes its installer to; this only adds the
+      # macOS asset and leaves the Windows .exe in place.
+      - name: Publish to latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          files: instant-record-macOS.zip
