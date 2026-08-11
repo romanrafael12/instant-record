@@ -272,13 +272,22 @@ static obs_encoder_t *create_clean_video_encoder(void)
 		"obs_x264",                                    /* universal software fallback   */
 	};
 	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+		/* Only try ids that are actually REGISTERED on this platform.
+		 * obs_video_encoder_create() does NOT return NULL for an unknown
+		 * id: it logs "Encoder ID 'x' not found" and hands back a broken
+		 * encoder shell that then fails at obs_output_start(). So we must
+		 * gate on obs_get_encoder_codec(), which returns NULL for any id
+		 * that isn't registered (e.g. NVENC/AMF on macOS). */
+		if (!obs_get_encoder_codec(candidates[i]))
+			continue;
 		obs_encoder_t *e = make_video_encoder(candidates[i]);
 		if (e) {
 			obs_log(LOG_INFO, "[instant-record] clean program: video encoder '%s'", candidates[i]);
 			return e;
 		}
 	}
-	return NULL;
+	/* x264 is always registered; last-resort safety net. */
+	return make_video_encoder("obs_x264");
 }
 
 /* Caller holds g.mutex. Releases whatever is half-built. */
