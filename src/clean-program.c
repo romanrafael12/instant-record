@@ -1,6 +1,6 @@
 /*
 Instant Record — Clean Program recorder
-Copyright (C) 2025
+Copyright (C) 2026
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -251,6 +251,26 @@ static obs_encoder_t *make_video_encoder(const char *enc_id)
 	return e;
 }
 
+/* Pick a video encoder that actually EXISTS on this platform. On macOS the
+ * NVIDIA/AMD encoders are not registered, so obs_get_encoder_codec() returns
+ * NULL for them and we fall through to x264 (always available). This avoids
+ * the macOS failure where obs_video_encoder_create("jim_nvenc") did not
+ * return a clean NULL and the x264 fallback never triggered. */
+static const char *pick_clean_video_encoder(void)
+{
+	static const char *candidates[] = {
+		"jim_nvenc",        /* NVIDIA (Windows/Linux) */
+		"obs_nvenc",        /* newer NVENC id */
+		"h264_texture_amf", /* AMD (Windows) */
+		"obs_x264",         /* universal fallback (macOS uses this) */
+	};
+	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+		if (obs_get_encoder_codec(candidates[i]))
+			return candidates[i];
+	}
+	return "obs_x264";
+}
+
 /* Caller holds g.mutex. Releases whatever is half-built. */
 static void teardown_chain_locked(void)
 {
@@ -359,8 +379,9 @@ bool clean_program_start(void)
 		return false;
 	}
 
-	/* Prefer NVENC (keeps the CPU free); fall back to x264. */
-	g.venc = make_video_encoder("jim_nvenc");
+	/* Pick an encoder that exists on this platform (NVENC on Windows,
+	 * x264 on macOS); guaranteed x264 fallback. */
+	g.venc = make_video_encoder(pick_clean_video_encoder());
 	if (!g.venc)
 		g.venc = make_video_encoder("obs_x264");
 	obs_encoder_set_video(g.venc, g.video_output);
