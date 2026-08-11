@@ -241,7 +241,9 @@ static char *build_output_path(const char *folder, const char *container)
 	return path;
 }
 
-/* Try one encoder id; returns a created video encoder or NULL. */
+/* Try one encoder id; returns a created video encoder, or NULL if that id is
+ * not registered on this platform (OBS logs a harmless "Encoder ID 'x' not
+ * found" in that case). */
 static obs_encoder_t *make_video_encoder(const char *enc_id)
 {
 	obs_data_t *s = obs_data_create();
@@ -251,24 +253,32 @@ static obs_encoder_t *make_video_encoder(const char *enc_id)
 	return e;
 }
 
-/* Pick a video encoder that actually EXISTS on this platform. On macOS the
- * NVIDIA/AMD encoders are not registered, so obs_get_encoder_codec() returns
- * NULL for them and we fall through to x264 (always available). This avoids
- * the macOS failure where obs_video_encoder_create("jim_nvenc") did not
- * return a clean NULL and the x264 fallback never triggered. */
-static const char *pick_clean_video_encoder(void)
+/* Create a clean-program video encoder that this platform can actually use.
+ * We TRY each candidate in preference order and keep the first one that is
+ * created successfully. This never relies on obs_get_encoder_codec(), so a
+ * Windows-only id like "jim_nvenc" simply returns NULL on macOS and we move
+ * on to the next candidate (previously the code assumed the id was usable and
+ * the clean recording failed to start on Mac). On macOS we prefer the
+ * VideoToolbox HARDWARE H264 encoder so a live multi-camera show is not
+ * bottlenecked by x264 software encoding; x264 stays as the last resort. */
+static obs_encoder_t *create_clean_video_encoder(void)
 {
 	static const char *candidates[] = {
-		"jim_nvenc",        /* NVIDIA (Windows/Linux) */
-		"obs_nvenc",        /* newer NVENC id */
-		"h264_texture_amf", /* AMD (Windows) */
-		"obs_x264",         /* universal fallback (macOS uses this) */
+		"obs_nvenc",                                   /* NVIDIA, newer id (Win/Linux) */
+		"jim_nvenc",                                   /* NVIDIA, older id (Win/Linux) */
+		"h264_texture_amf",                            /* AMD (Windows)                 */
+		"com.apple.videotoolbox.videoencoder.ave.avc", /* macOS H264 hardware           */
+		"com.apple.videotoolbox.videoencoder.h264",    /* macOS H264 (older id)         */
+		"obs_x264",                                    /* universal software fallback   */
 	};
 	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-		if (obs_get_encoder_codec(candidates[i]))
-			return candidates[i];
+		obs_encoder_t *e = make_video_encoder(candidates[i]);
+		if (e) {
+			obs_log(LOG_INFO, "[instant-record] clean program: video encoder '%s'", candidates[i]);
+			return e;
+		}
 	}
-	return "obs_x264";
+	return NULL;
 }
 
 /* Caller holds g.mutex. Releases whatever is half-built. */
@@ -379,11 +389,17 @@ bool clean_program_start(void)
 		return false;
 	}
 
-	/* Pick an encoder that exists on this platform (NVENC on Windows,
-	 * x264 on macOS); guaranteed x264 fallback. */
-	g.venc = make_video_encoder(pick_clean_video_encoder());
-	if (!g.venc)
-		g.venc = make_video_encoder("obs_x264");
+	/* Create the first encoder this platform can actually build (NVENC on
+	 * Windows, VideoToolbox hardware on macOS, x264 as the last resort). */
+	g.venc = create_clean_video_encoder();
+	if (!g.venc) {
+		obs_log(LOG_ERROR, "[instant-record] clean program: no usable video encoder found");
+		if (cam0)
+			obs_source_release(cam0);
+		teardown_chain_locked();
+		pthread_mutex_unlock(&g.mutex);
+		return false;
+	}
 	obs_encoder_set_video(g.venc, g.video_output);
 
 	/* Record the global OBS mix (program/commentary audio). */
