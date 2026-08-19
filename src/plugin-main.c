@@ -319,13 +319,33 @@ static void ir_hotkeys_load(void)
 	obs_data_release(data);
 }
 
-/* Save bindings whenever OBS is about to exit, so a normal close keeps
- * the user's keys even if unload timing varies. */
+/* Save bindings whenever OBS saves (Ctrl+S, scene switches, periodic) and
+ * on exit, so the user's keys survive even a non-clean shutdown. */
+static void ir_frontend_save(obs_data_t *save_data, bool saving, void *priv)
+{
+	UNUSED_PARAMETER(save_data);
+	UNUSED_PARAMETER(priv);
+	if (saving)
+		ir_hotkeys_save();
+}
+
 static void ir_frontend_event(enum obs_frontend_event event, void *priv)
 {
 	UNUSED_PARAMETER(priv);
-	if (event == OBS_FRONTEND_EVENT_EXIT)
+	switch (event) {
+	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		/* Restore AFTER OBS has finished loading its own hotkey config,
+		 * so our saved bindings are applied last and don't get wiped.
+		 * (Loading only in post_load runs too early — OBS overwrites it
+		 * when it finishes startup, which is why the keys reset.) */
+		ir_hotkeys_load();
+		break;
+	case OBS_FRONTEND_EVENT_EXIT:
 		ir_hotkeys_save();
+		break;
+	default:
+		break;
+	}
 }
 
 void obs_module_post_load(void)
@@ -352,9 +372,11 @@ void obs_module_post_load(void)
 						       obs_module_text("InstantRecord.Hotkey.CleanProgram"),
 						       hk_clean_toggle_cb, NULL);
 
-	/* Restore the user's saved key bindings. */
+	/* Restore now (covers a plugin-only reload) and again on
+	 * FINISHED_LOADING for normal startup, so OBS can't clobber them. */
 	ir_hotkeys_load();
 	obs_frontend_add_event_callback(ir_frontend_event, NULL);
+	obs_frontend_add_save_callback(ir_frontend_save, NULL);
 }
 
 void obs_module_unload(void)
@@ -363,6 +385,7 @@ void obs_module_unload(void)
 
 	/* Persist bindings before we tear the hotkeys down. */
 	ir_hotkeys_save();
+	obs_frontend_remove_save_callback(ir_frontend_save, NULL);
 	obs_frontend_remove_event_callback(ir_frontend_event, NULL);
 
 	if (hk_save_all != OBS_INVALID_HOTKEY_ID)
