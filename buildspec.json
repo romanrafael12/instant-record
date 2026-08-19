@@ -1,12 +1,12 @@
 {
     "dependencies": {
         "obs-studio": {
-            "version": "32.2.2",
+            "version": "31.1.1",
             "baseUrl": "https://github.com/obsproject/obs-studio/archive/refs/tags",
             "label": "OBS sources",
             "hashes": {
-                "macos": "35d3cd0979d65664fada7119fdb612eca7c34b61a1623a330caec74bf72626c4",
-                "windows-x64": "f15f001f1fa526405318835f44f9910046502f496ebc3a30d5296a5018b831aa"
+                "macos": "39751f067bacc13d44b116c5138491b5f1391f91516d3d590d874edd21292291",
+                "windows-x64": "2c8427c10b55ac6d68008df2e9a3e82f4647aaad18f105e30d4713c2de678ccf"
             }
         },
         "prebuilt": {
@@ -38,7 +38,7 @@
     },
     "name": "instant-record",
     "displayName": "Instant Record",
-    "version": "0.9.13",
+    "version": "0.9.14",
     "author": "Rafael Roman",
     "website": "https://instanrp.com",
     "email": "rafael@instanrp.com"
