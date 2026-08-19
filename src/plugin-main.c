@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
+#include <util/config-file.h>
 #include <util/platform.h>
 #include <plugin-support.h>
 #include <string.h>
@@ -258,52 +259,18 @@ bool obs_module_load(void)
 
 /* Called after all modules load and the frontend/UI is up — the safe
  * point to attach a dock and register frontend hotkeys. */
-/* We persist the global hotkey bindings ourselves (in the plugin's
- * config dir) instead of relying on OBS's frontend persistence, which
- * doesn't reliably restore them for hotkeys registered at post_load. */
-static void ir_hotkeys_save(void)
-{
-	struct {
-		obs_hotkey_id id;
-		const char *key;
-	} items[] = {
-		{hk_save_all, "InstantRecord.SaveAll"},
-		{hk_start_all, "InstantRecord.StartAll"},
-		{hk_stop_all, "InstantRecord.StopAll"},
-		{hk_clean_toggle, "InstantRecord.CleanProgram"},
-	};
-
-	obs_data_t *data = obs_data_create();
-	int total = 0;
-	for (size_t i = 0; i < 4; i++) {
-		obs_data_array_t *a = obs_hotkey_save(items[i].id);
-		total += a ? (int)obs_data_array_count(a) : 0;
-		obs_data_set_array(data, items[i].key, a);
-		obs_data_array_release(a);
-	}
-
-	char *dir = obs_module_get_config_path(obs_current_module(), "");
-	if (dir) {
-		os_mkdirs(dir);
-		bfree(dir);
-	}
-	char *path = obs_module_get_config_path(obs_current_module(), "hotkeys.json");
-	if (path) {
-		bool ok = obs_data_save_json(data, path);
-		obs_log(LOG_INFO, "[instant-record] hotkeys: saved %d binding(s) -> %s [%s]", total, path,
-			ok ? "ok" : "WRITE FAILED");
-		bfree(path);
-	} else {
-		obs_log(LOG_WARNING, "[instant-record] hotkeys: save skipped (no config path)");
-	}
-	obs_data_release(data);
-}
-
+/* Hotkey persistence: OBS's Settings dialog already SAVES every frontend
+ * hotkey binding (including ours) into the profile config under the
+ * [Hotkeys] section, keyed by the hotkey's registration name, as
+ * {"bindings":[...]}. But at startup OBS only RELOADS its own built-in
+ * hotkeys — it never re-applies plugin hotkeys, which is why ours reset.
+ * So we read our bindings straight back from that same profile config and
+ * apply them. No custom file needed; OBS is the source of truth. */
 static void ir_hotkeys_load(void)
 {
 	struct {
 		obs_hotkey_id id;
-		const char *key;
+		const char *name;
 	} items[] = {
 		{hk_save_all, "InstantRecord.SaveAll"},
 		{hk_start_all, "InstantRecord.StartAll"},
@@ -311,52 +278,39 @@ static void ir_hotkeys_load(void)
 		{hk_clean_toggle, "InstantRecord.CleanProgram"},
 	};
 
-	char *path = obs_module_get_config_path(obs_current_module(), "hotkeys.json");
-	if (!path)
-		return;
-	obs_data_t *data = obs_data_create_from_json_file(path);
-	if (!data) {
-		obs_log(LOG_INFO, "[instant-record] hotkeys: no saved file yet at %s", path);
-		bfree(path);
+	config_t *cfg = obs_frontend_get_profile_config();
+	if (!cfg) {
+		obs_log(LOG_WARNING, "[instant-record] hotkeys: no profile config available yet");
 		return;
 	}
 
 	int total = 0;
 	for (size_t i = 0; i < 4; i++) {
-		obs_data_array_t *a = obs_data_get_array(data, items[i].key);
-		total += a ? (int)obs_data_array_count(a) : 0;
-		obs_hotkey_load(items[i].id, a);
-		obs_data_array_release(a);
+		const char *json = config_get_string(cfg, "Hotkeys", items[i].name);
+		if (!json || !*json)
+			continue;
+		obs_data_t *data = obs_data_create_from_json(json);
+		if (!data)
+			continue;
+		obs_data_array_t *arr = obs_data_get_array(data, "bindings");
+		total += arr ? (int)obs_data_array_count(arr) : 0;
+		obs_hotkey_load(items[i].id, arr);
+		obs_data_array_release(arr);
+		obs_data_release(data);
 	}
-	obs_log(LOG_INFO, "[instant-record] hotkeys: loaded %d binding(s) from %s", total, path);
-
-	bfree(path);
-	obs_data_release(data);
-}
-
-/* Save bindings whenever OBS saves (Ctrl+S, scene switches, periodic) and
- * on exit, so the user's keys survive even a non-clean shutdown. */
-static void ir_frontend_save(obs_data_t *save_data, bool saving, void *priv)
-{
-	UNUSED_PARAMETER(save_data);
-	UNUSED_PARAMETER(priv);
-	if (saving)
-		ir_hotkeys_save();
+	obs_log(LOG_INFO, "[instant-record] hotkeys: restored %d binding(s) from OBS profile config", total);
 }
 
 static void ir_frontend_event(enum obs_frontend_event event, void *priv)
 {
 	UNUSED_PARAMETER(priv);
+	/* Re-apply our bindings after OBS has finished loading the profile
+	 * (and again after a profile/scene-collection switch), because OBS
+	 * only reloads its own built-in hotkeys, never plugin ones. */
 	switch (event) {
 	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
-		/* Restore AFTER OBS has finished loading its own hotkey config,
-		 * so our saved bindings are applied last and don't get wiped.
-		 * (Loading only in post_load runs too early — OBS overwrites it
-		 * when it finishes startup, which is why the keys reset.) */
+	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
 		ir_hotkeys_load();
-		break;
-	case OBS_FRONTEND_EVENT_EXIT:
-		ir_hotkeys_save();
 		break;
 	default:
 		break;
@@ -387,20 +341,17 @@ void obs_module_post_load(void)
 						       obs_module_text("InstantRecord.Hotkey.CleanProgram"),
 						       hk_clean_toggle_cb, NULL);
 
-	/* Restore now (covers a plugin-only reload) and again on
-	 * FINISHED_LOADING for normal startup, so OBS can't clobber them. */
+	/* Try once now (profile config is usually ready), then again on
+	 * FINISHED_LOADING to be safe. OBS itself saves these bindings on
+	 * Apply, so we only need to load. */
 	ir_hotkeys_load();
 	obs_frontend_add_event_callback(ir_frontend_event, NULL);
-	obs_frontend_add_save_callback(ir_frontend_save, NULL);
 }
 
 void obs_module_unload(void)
 {
 	ir_ws_unregister();
 
-	/* Persist bindings before we tear the hotkeys down. */
-	ir_hotkeys_save();
-	obs_frontend_remove_save_callback(ir_frontend_save, NULL);
 	obs_frontend_remove_event_callback(ir_frontend_event, NULL);
 
 	if (hk_save_all != OBS_INVALID_HOTKEY_ID)
