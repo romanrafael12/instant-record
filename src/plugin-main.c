@@ -263,21 +263,24 @@ bool obs_module_load(void)
  * doesn't reliably restore them for hotkeys registered at post_load. */
 static void ir_hotkeys_save(void)
 {
-	obs_data_t *data = obs_data_create();
-	obs_data_array_t *a;
+	struct {
+		obs_hotkey_id id;
+		const char *key;
+	} items[] = {
+		{hk_save_all, "InstantRecord.SaveAll"},
+		{hk_start_all, "InstantRecord.StartAll"},
+		{hk_stop_all, "InstantRecord.StopAll"},
+		{hk_clean_toggle, "InstantRecord.CleanProgram"},
+	};
 
-	a = obs_hotkey_save(hk_save_all);
-	obs_data_set_array(data, "InstantRecord.SaveAll", a);
-	obs_data_array_release(a);
-	a = obs_hotkey_save(hk_start_all);
-	obs_data_set_array(data, "InstantRecord.StartAll", a);
-	obs_data_array_release(a);
-	a = obs_hotkey_save(hk_stop_all);
-	obs_data_set_array(data, "InstantRecord.StopAll", a);
-	obs_data_array_release(a);
-	a = obs_hotkey_save(hk_clean_toggle);
-	obs_data_set_array(data, "InstantRecord.CleanProgram", a);
-	obs_data_array_release(a);
+	obs_data_t *data = obs_data_create();
+	int total = 0;
+	for (size_t i = 0; i < 4; i++) {
+		obs_data_array_t *a = obs_hotkey_save(items[i].id);
+		total += a ? (int)obs_data_array_count(a) : 0;
+		obs_data_set_array(data, items[i].key, a);
+		obs_data_array_release(a);
+	}
 
 	char *dir = obs_module_get_config_path(obs_current_module(), "");
 	if (dir) {
@@ -286,36 +289,48 @@ static void ir_hotkeys_save(void)
 	}
 	char *path = obs_module_get_config_path(obs_current_module(), "hotkeys.json");
 	if (path) {
-		obs_data_save_json(data, path);
+		bool ok = obs_data_save_json(data, path);
+		obs_log(LOG_INFO, "[instant-record] hotkeys: saved %d binding(s) -> %s [%s]", total, path,
+			ok ? "ok" : "WRITE FAILED");
 		bfree(path);
+	} else {
+		obs_log(LOG_WARNING, "[instant-record] hotkeys: save skipped (no config path)");
 	}
 	obs_data_release(data);
 }
 
 static void ir_hotkeys_load(void)
 {
+	struct {
+		obs_hotkey_id id;
+		const char *key;
+	} items[] = {
+		{hk_save_all, "InstantRecord.SaveAll"},
+		{hk_start_all, "InstantRecord.StartAll"},
+		{hk_stop_all, "InstantRecord.StopAll"},
+		{hk_clean_toggle, "InstantRecord.CleanProgram"},
+	};
+
 	char *path = obs_module_get_config_path(obs_current_module(), "hotkeys.json");
 	if (!path)
 		return;
 	obs_data_t *data = obs_data_create_from_json_file(path);
-	bfree(path);
-	if (!data)
+	if (!data) {
+		obs_log(LOG_INFO, "[instant-record] hotkeys: no saved file yet at %s", path);
+		bfree(path);
 		return;
+	}
 
-	obs_data_array_t *a;
-	a = obs_data_get_array(data, "InstantRecord.SaveAll");
-	obs_hotkey_load(hk_save_all, a);
-	obs_data_array_release(a);
-	a = obs_data_get_array(data, "InstantRecord.StartAll");
-	obs_hotkey_load(hk_start_all, a);
-	obs_data_array_release(a);
-	a = obs_data_get_array(data, "InstantRecord.StopAll");
-	obs_hotkey_load(hk_stop_all, a);
-	obs_data_array_release(a);
-	a = obs_data_get_array(data, "InstantRecord.CleanProgram");
-	obs_hotkey_load(hk_clean_toggle, a);
-	obs_data_array_release(a);
+	int total = 0;
+	for (size_t i = 0; i < 4; i++) {
+		obs_data_array_t *a = obs_data_get_array(data, items[i].key);
+		total += a ? (int)obs_data_array_count(a) : 0;
+		obs_hotkey_load(items[i].id, a);
+		obs_data_array_release(a);
+	}
+	obs_log(LOG_INFO, "[instant-record] hotkeys: loaded %d binding(s) from %s", total, path);
 
+	bfree(path);
 	obs_data_release(data);
 }
 
