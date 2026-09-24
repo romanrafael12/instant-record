@@ -64,12 +64,17 @@ The macOS build is **universal (Apple Silicon + Intel)** and unsigned.
 1. Download **`instant-record-macOS.zip`** from the [Releases page](https://github.com/romanrafael12/instant-record/releases/latest), or build it yourself from the [Actions](https://github.com/romanrafael12/instant-record/actions) tab.
 2. **Close OBS.**
 3. Unzip it — you'll get **`instant-record.plugin`**.
-4. Move `instant-record.plugin` into `~/Library/Application Support/obs-studio/plugins/` (create the `plugins` folder if it isn't there). Replace the old one if you're updating.
-5. Because the plugin is unsigned, clear the macOS download quarantine so OBS will load it — open **Terminal** and run:
+4. Open your OBS plugins folder — in **Terminal**, run:
+   ```
+   open ~/Library/Application\ Support/obs-studio/plugins/
+   ```
+   (If it says the folder doesn't exist, create the `plugins` folder there first.)
+5. **Drag `instant-record.plugin` into that folder.** If you're updating, replace the old one.
+6. Because the plugin is unsigned, clear the macOS download quarantine so OBS will load it — in **Terminal**, run:
    ```
    xattr -dr com.apple.quarantine ~/Library/Application\ Support/obs-studio/plugins/instant-record.plugin
    ```
-6. Open OBS. You'll see the **Instant Record** dock, and the **Instant Record (Source)** filter on any source's Filters.
+7. Open OBS. You'll see the **Instant Record** dock, and the **Instant Record (Source)** filter on any source's Filters.
 
 > Clean Program uses Apple's **VideoToolbox hardware encoder** automatically on macOS, so it won't bottleneck your CPU during a live show.
 
