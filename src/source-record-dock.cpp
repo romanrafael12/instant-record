@@ -605,6 +605,10 @@ public:
 			makeStat("InstantRecord.Health.EncoderLag", &statEnc);
 			makeStat("InstantRecord.Health.RenderLag", &statRender);
 			makeStat("InstantRecord.Health.DiskFree", &statDisk);
+			auto *rst = new QPushButton(T("InstantRecord.Health.Reset"), statsStrip);
+			rst->setToolTip(T("InstantRecord.Health.ResetTip"));
+			sl->addWidget(rst);
+			connect(rst, &QPushButton::clicked, this, [this] { resetLag(); });
 		}
 		statsStrip->setVisible(false);
 		root->addWidget(statsStrip);
@@ -961,7 +965,8 @@ private:
 							 QString::fromUtf8(rows[i].name), i});
 		}
 		cardsBox->addStretch(); /* keep cards packed at the top */
-		emptyHint->setVisible(n == 0);
+		emptyHint->setText(n == 0 ? T("InstantRecord.Dock.EmptyHint") : T("InstantRecord.Dock.DropHintShort"));
+		emptyHint->setVisible(true);
 	}
 
 	void refresh()
@@ -1137,8 +1142,8 @@ private:
 		/* ---- layout-dependent chrome ---- */
 		subtitle->setVisible(!small);
 		counters->setVisible(!small);
-		fullBar->setVisible(large);
-		compactBar->setVisible(!large);
+		fullBar->setVisible(false); /* legacy buttons, replaced by the mode bar */
+		compactBar->setVisible(true);
 		statsStrip->setVisible(large);
 
 		/* Header alert pill (small layout only; the banner carries the rest). */
@@ -1191,7 +1196,7 @@ private:
 		}
 
 		/* Compact bottom bar: mode picker + one Start/Stop button. */
-		if (!large) {
+		{
 			bool running = (curMode == MODE_CLEAN) ? cleanActive : anyLive;
 			bool busy = anyLive || cleanActive;
 			const QString arrow = QString::fromUtf8(" \xE2\x96\xBE");
