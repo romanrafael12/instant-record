@@ -61,6 +61,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QList>
 #include <QRect>
 #include <QMargins>
+#include <QProgressBar>
+#include <QResizeEvent>
+#include <QLocale>
 
 /* Instant Replay brand palette (from the app UI). */
 #define IR_BG "#0b0b0d"
@@ -197,6 +200,8 @@ static QString sr_encoder_family(const QString &id)
 		return "amf";
 	if (id.contains("qsv"))
 		return "qsv";
+	if (id.contains("videotoolbox"))
+		return "videotoolbox";
 	if (id.contains("x264"))
 		return "x264";
 	return "other";
@@ -206,9 +211,12 @@ static QString sr_encoder_family(const QString &id)
  * cleanly everywhere) over HEVC/AV1. */
 static void sr_consider_enc(QString &slot, const QString &id)
 {
-	bool idH264 = id.contains("h264") || id.contains("x264");
-	bool slotH264 = slot.contains("h264") || slot.contains("x264");
-	if (slot.isEmpty() || (idH264 && !slotH264))
+	bool idH264 = id.contains("h264") || id.contains("x264") || id.contains("avc");
+	bool slotH264 = slot.contains("h264") || slot.contains("x264") || slot.contains("avc");
+	/* VideoToolbox: the "ave.avc" id is the Apple hardware H.264 encoder. */
+	bool idAve = id.contains("ave.avc");
+	bool slotAve = slot.contains("ave.avc");
+	if (slot.isEmpty() || (idAve && !slotAve) || (!slotAve && idH264 && !slotH264))
 		slot = id;
 }
 
@@ -228,12 +236,14 @@ static QString sr_stream_family()
 }
 
 /* Pick the best available encoder: hardware first (NVENC > AMF > QSV >
- * x264), and prefer one that isn't the same family the stream is using
- * so the ISO recording doesn't fight the stream for the same chip.
+ * VideoToolbox > x264), and prefer a hardware encoder that isn't the same
+ * family the stream is using so the ISO recording doesn't fight the stream
+ * for the same chip. If there is no spare hardware, share the stream's
+ * hardware encoder rather than falling back to CPU x264.
  * Adapts to whatever hardware the machine actually has. */
 static QString sr_resolve_auto_encoder()
 {
-	QString nv, amf, qsv, x264;
+	QString nv, amf, qsv, vt, x264;
 	const char *id;
 	size_t i = 0;
 	while (obs_enum_encoder_types(i++, &id)) {
@@ -247,18 +257,20 @@ static QString sr_resolve_auto_encoder()
 			sr_consider_enc(amf, s);
 		else if (fam == "qsv")
 			sr_consider_enc(qsv, s);
+		else if (fam == "videotoolbox")
+			sr_consider_enc(vt, s);
 		else if (fam == "x264")
 			sr_consider_enc(x264, s);
 	}
-	const QString fams[4] = {"nvenc", "amf", "qsv", "x264"};
-	QString ids[4] = {nv, amf, qsv, x264};
+	const QString fams[5] = {"nvenc", "amf", "qsv", "videotoolbox", "x264"};
+	QString ids[5] = {nv, amf, qsv, vt, x264};
 	QString streamFam = sr_stream_family();
-	/* Best available whose family differs from the stream's. */
+	/* Best HARDWARE encoder whose family differs from the stream's. */
 	for (int k = 0; k < 4; k++)
 		if (!ids[k].isEmpty() && fams[k] != streamFam)
 			return ids[k];
 	/* Otherwise the best available, even if it shares with the stream. */
-	for (int k = 0; k < 4; k++)
+	for (int k = 0; k < 5; k++)
 		if (!ids[k].isEmpty())
 			return ids[k];
 	return "obs_x264";
@@ -332,11 +344,139 @@ struct Card {
 	QLabel *info;
 	QLabel *status;
 	QLabel *time;
+	QLabel *pct;          /* health pill: % of frames skipped */
+	QLabel *skipped;      /* "812 skipped / of 45,210" (large layout only) */
+	QProgressBar *lagBar; /* lag bar (large layout only) */
 	QPushButton *clip;
 	QPushButton *del;
 	QString name;
 	int index;
 };
+
+/* The dock picks one of three layouts from its own width, so it can be
+ * dragged as narrow as you like without the bottom buttons colliding. */
+enum DockLayout { LAYOUT_SMALL = 0, LAYOUT_MEDIUM = 1, LAYOUT_LARGE = 2 };
+#define IR_LAYOUT_MEDIUM_MIN 360
+#define IR_LAYOUT_LARGE_MIN 520
+
+static int layout_for_width(int w)
+{
+	if (w < IR_LAYOUT_MEDIUM_MIN)
+		return LAYOUT_SMALL;
+	if (w < IR_LAYOUT_LARGE_MIN)
+		return LAYOUT_MEDIUM;
+	return LAYOUT_LARGE;
+}
+
+/* What the compact bottom bar's mode button cycles through. */
+enum DockMode { MODE_BUFFER = 0, MODE_RECORD = 1, MODE_CLEAN = 2 };
+
+static const char *mode_key(int m)
+{
+	return m == MODE_RECORD ? "record" : (m == MODE_CLEAN ? "clean" : "buffer");
+}
+
+static int mode_from_key(const char *k)
+{
+	if (k && strcmp(k, "record") == 0)
+		return MODE_RECORD;
+	if (k && strcmp(k, "clean") == 0)
+		return MODE_CLEAN;
+	return MODE_BUFFER;
+}
+
+static const char *mode_text_key(int m, bool small)
+{
+	if (m == MODE_RECORD)
+		return small ? "InstantRecord.Dock.ModeShort.Record" : "InstantRecord.Dock.Mode.Record";
+	if (m == MODE_CLEAN)
+		return small ? "InstantRecord.Dock.ModeShort.Clean" : "InstantRecord.Dock.Mode.Clean";
+	return "InstantRecord.Dock.Mode.Buffer";
+}
+
+/* ---- per-camera health ---------------------------------------------- */
+
+struct Health {
+	double pct;
+	int level; /* 0 ok, 1 amber, 2 red */
+};
+
+static Health row_health(const struct sr_status_row &r)
+{
+	Health h = {0.0, 0};
+	if (r.status == SR_STATUS_ERROR) {
+		h.level = 2;
+		return h;
+	}
+	/* Don't judge until there are enough frames to mean something. */
+	if (r.status != SR_STATUS_RECORDING || r.total_frames < 120)
+		return h;
+	h.pct = 100.0 * (double)r.skipped_frames / (double)r.total_frames;
+	h.level = h.pct >= 2.0 ? 2 : (h.pct >= 0.5 ? 1 : 0);
+	return h;
+}
+
+static QString level_color(int level)
+{
+	return QString::fromLatin1(level == 2 ? IR_RED : (level == 1 ? IR_GOLD : IR_GREEN));
+}
+
+static QString level_bg(int level)
+{
+	return QString::fromLatin1(level == 2 ? "#33141a" : (level == 1 ? "#2a2210" : "#12301d"));
+}
+
+static QString num(qulonglong v)
+{
+	return QLocale().toString(v);
+}
+
+/* Short, readable name for an encoder id. */
+static QString enc_label(const char *id)
+{
+	if (!id || !*id)
+		return QString();
+	QString fam = sr_encoder_family(QString::fromUtf8(id));
+	if (fam == "nvenc")
+		return QStringLiteral("NVENC");
+	if (fam == "amf")
+		return QStringLiteral("AMF");
+	if (fam == "qsv")
+		return QStringLiteral("QSV");
+	if (fam == "videotoolbox")
+		return QStringLiteral("VideoToolbox");
+	if (fam == "x264")
+		return QStringLiteral("x264");
+	return QString::fromUtf8(id);
+}
+
+/* Folder to report free disk space for: the configured output folder,
+ * else OBS's recording folder. */
+static std::string resolve_out_path()
+{
+	std::string p;
+	obs_data_t *saved = obs_data_create_from_json_file(sr_cfg_file().c_str());
+	if (saved) {
+		const char *s = obs_data_get_string(saved, "path");
+		if (s && *s)
+			p = s;
+		obs_data_release(saved);
+	}
+	if (p.empty()) {
+		char *rec = obs_frontend_get_current_record_output_path();
+		if (rec) {
+			p = rec;
+			bfree(rec);
+		}
+	}
+	return p;
+}
+
+static QString disk_free_text(const std::string &path)
+{
+	uint64_t bytes = os_get_free_disk_space(path.empty() ? "." : path.c_str());
+	return QString::asprintf("%.0f GB", (double)bytes / 1e9);
+}
 
 class InstantRecordDock : public QWidget {
 public:
@@ -368,7 +508,11 @@ public:
 			"QWidget#scrollcontent{background:transparent;}"
 			"QPushButton#sizebtn{background:#1a1a1e;color:#9aa0a6;border:1px solid #2e2e34;border-radius:8px;padding:4px 0;font-weight:800;}"
 			"QPushButton#sizebtn:checked{background:" IR_PURPLE ";color:#fff;border:none;}"
-			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}");
+			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}"
+			"QPushButton#mode{background:#1d1733;border:1px solid #4a3a92;color:#c9bcff;border-radius:12px;padding:5px 11px;font-weight:700;}"
+			"QPushButton#mode:hover{border-color:" IR_PURPLE ";}"
+			"QFrame#stat{background:" IR_CARD ";border:1px solid #242428;border-radius:10px;}"
+			"QWidget#tsbox{background:transparent;}");
 
 		auto *root = new QVBoxLayout(this);
 		root->setContentsMargins(10, 10, 10, 10);
@@ -390,12 +534,15 @@ public:
 		titleBox->setSpacing(0);
 		auto *title = new QLabel("Instant Record", this);
 		title->setObjectName("title");
-		auto *subtitle = new QLabel("by Instant Replay", this);
+		subtitle = new QLabel("by Instant Replay", this);
 		subtitle->setObjectName("subtitle");
 		titleBox->addWidget(title);
 		titleBox->addWidget(subtitle);
 		header->addLayout(titleBox);
 		header->addStretch();
+		alertPill = new QLabel(this);
+		alertPill->setVisible(false);
+		header->addWidget(alertPill);
 		counters = new QLabel(this);
 		counters->setStyleSheet("font-size:11px;font-weight:700;");
 		header->addWidget(counters);
@@ -406,6 +553,55 @@ public:
 		header->addSpacing(8);
 		header->addWidget(addTop);
 		root->addLayout(header);
+
+		/* Health alert banner: only shown while a camera is skipping frames. */
+		alertBanner = new QFrame(this);
+		alertBanner->setObjectName("alert");
+		{
+			auto *al = new QHBoxLayout(alertBanner);
+			al->setContentsMargins(10, 6, 8, 6);
+			al->setSpacing(8);
+			alertIcon = new QLabel(QString::fromUtf8("\xE2\x9A\xA0"), alertBanner); /* warning sign */
+			alertText = new QLabel(alertBanner);
+			alertText->setWordWrap(true);
+			alertReset = new QPushButton(T("InstantRecord.Health.Reset"), alertBanner);
+			alertReset->setToolTip(T("InstantRecord.Health.ResetTip"));
+			al->addWidget(alertIcon);
+			al->addWidget(alertText, 1);
+			al->addWidget(alertReset);
+			connect(alertReset, &QPushButton::clicked, this, [this] { resetLag(); });
+		}
+		alertBanner->setVisible(false);
+		root->addWidget(alertBanner);
+
+		/* Stats strip (large layout): the same numbers OBS Stats shows, but
+		 * for the Instant Record cameras. */
+		statsStrip = new QWidget(this);
+		{
+			auto *sl = new QHBoxLayout(statsStrip);
+			sl->setContentsMargins(0, 0, 0, 0);
+			sl->setSpacing(8);
+			auto makeStat = [&](const char *titleKey, QLabel **valueOut) {
+				auto *f = new QFrame(statsStrip);
+				f->setObjectName("stat");
+				auto *v = new QVBoxLayout(f);
+				v->setContentsMargins(10, 6, 10, 6);
+				v->setSpacing(0);
+				auto *tl = new QLabel(T(titleKey), f);
+				tl->setStyleSheet("color:" IR_MUTED ";font-size:11px;");
+				auto *val = new QLabel(QStringLiteral("--"), f);
+				val->setStyleSheet("font-size:14px;font-weight:700;");
+				v->addWidget(tl);
+				v->addWidget(val);
+				sl->addWidget(f, 1);
+				*valueOut = val;
+			};
+			makeStat("InstantRecord.Health.EncoderLag", &statEnc);
+			makeStat("InstantRecord.Health.RenderLag", &statRender);
+			makeStat("InstantRecord.Health.DiskFree", &statDisk);
+		}
+		statsStrip->setVisible(false);
+		root->addWidget(statsStrip);
 
 		/* Clean Program live card — hidden until a clean-program
 		 * recording is running. Shows elapsed time, the camera being
@@ -471,7 +667,9 @@ public:
 		setAcceptDrops(true); /* drag a source from OBS onto the dock */
 
 		/* Bottom action bar. */
-		auto *btns = new QHBoxLayout();
+		fullBar = new QWidget(this);
+		auto *btns = new QHBoxLayout(fullBar);
+		btns->setContentsMargins(0, 0, 0, 0);
 		startAll = new QPushButton(T("InstantRecord.Dock.StartAll"), this);
 		startAll->setObjectName("start");
 		auto *stopAll = new QPushButton(T("InstantRecord.Dock.StopAll"), this);
@@ -486,7 +684,37 @@ public:
 		btns->addWidget(cleanBtn);
 		btns->addStretch();
 		btns->addWidget(config);
-		root->addLayout(btns);
+		root->addWidget(fullBar);
+
+		/* Compact bar (small / medium layouts): one mode button + one action
+		 * button, so the dock can be dragged much narrower. */
+		compactBar = new QWidget(this);
+		{
+			auto *cb = new QHBoxLayout(compactBar);
+			cb->setContentsMargins(0, 0, 0, 0);
+			cb->setSpacing(6);
+			modeBtn = new QPushButton(compactBar);
+			modeBtn->setObjectName("mode");
+			modeBtn->setToolTip(T("InstantRecord.Dock.ModeTip"));
+			actBtn = new QPushButton(compactBar);
+			actBtn->setObjectName("start");
+			saveBtn = new QPushButton(compactBar);
+			saveBtn->setObjectName("save");
+			saveBtn->setToolTip(T("InstantRecord.Dock.SaveBuffer"));
+			cfgBtn = new QPushButton(QString::fromUtf8("\xE2\x9A\x99"), compactBar); /* gear */
+			cfgBtn->setToolTip(T("InstantRecord.Dock.Config"));
+			cb->addWidget(modeBtn);
+			cb->addWidget(actBtn);
+			cb->addWidget(saveBtn);
+			cb->addStretch();
+			cb->addWidget(cfgBtn);
+			connect(modeBtn, &QPushButton::clicked, this, [this] { cycleMode(); });
+			connect(actBtn, &QPushButton::clicked, this, [this] { toggleRun(); });
+			connect(saveBtn, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
+			connect(cfgBtn, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
+		}
+		compactBar->setVisible(false);
+		root->addWidget(compactBar);
 
 		connect(cleanBtn, &QPushButton::clicked, this, [] { clean_program_toggle(); });
 
@@ -495,6 +723,8 @@ public:
 		connect(stopAll, &QPushButton::clicked, this, [] { sr_registry_stop_all(); });
 		connect(saveAll, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
 		connect(config, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
+
+		outPath = resolve_out_path();
 
 		auto *timer = new QTimer(this);
 		connect(timer, &QTimer::timeout, this, [this] { refresh(); });
@@ -507,6 +737,7 @@ public:
 			if (saved) {
 				if (obs_data_has_user_value(saved, "sidecar"))
 					sr_set_sidecar_enabled(obs_data_get_bool(saved, "sidecar") ? 1 : 0);
+				curMode = mode_from_key(obs_data_get_string(saved, "mode"));
 				obs_data_release(saved);
 			}
 		}
@@ -524,6 +755,91 @@ private:
 	std::vector<Card> cards;
 	QString lastSig;
 	bool blinkOn = false;
+	QLabel *subtitle = nullptr;
+	QLabel *alertPill = nullptr;
+	QFrame *alertBanner = nullptr;
+	QLabel *alertIcon = nullptr;
+	QLabel *alertText = nullptr;
+	QPushButton *alertReset = nullptr;
+	QWidget *statsStrip = nullptr;
+	QLabel *statEnc = nullptr;
+	QLabel *statRender = nullptr;
+	QLabel *statDisk = nullptr;
+	QWidget *fullBar = nullptr;
+	QWidget *compactBar = nullptr;
+	QPushButton *modeBtn = nullptr;
+	QPushButton *actBtn = nullptr;
+	QPushButton *saveBtn = nullptr;
+	QPushButton *cfgBtn = nullptr;
+	int layoutMode = LAYOUT_MEDIUM;
+	int curMode = MODE_BUFFER;
+	int liveCams = 0;
+	uint32_t renderBaseLag = 0;
+	uint32_t renderBaseTotal = 0;
+	std::string outPath;
+
+	void resetLag()
+	{
+		sr_registry_reset_lag();
+		renderBaseLag = obs_get_lagged_frames();
+		renderBaseTotal = obs_get_total_frames();
+		refresh();
+	}
+
+	void applyModeToCameras()
+	{
+		if (curMode == MODE_CLEAN)
+			return; /* clean program doesn't use the per-camera filters */
+		struct sr_global_config cfg;
+		cfg.path = nullptr;
+		cfg.rec_format = nullptr;
+		cfg.encoder_id = nullptr;
+		cfg.bitrate = 0;
+		cfg.record_mode = -1;
+		cfg.isolate_audio = -1;
+		cfg.scale_mode = -1;
+		cfg.fps_divisor = 0;
+		cfg.use_buffer = (curMode == MODE_BUFFER) ? 1 : 0;
+		cfg.also_buffer = -1;
+		cfg.buffer_seconds = 0;
+		sr_registry_apply_config(&cfg);
+	}
+
+	void saveModeToConfig()
+	{
+		obs_data_t *d = obs_data_create_from_json_file(sr_cfg_file().c_str());
+		if (!d)
+			d = obs_data_create();
+		obs_data_set_string(d, "mode", mode_key(curMode));
+		if (curMode != MODE_CLEAN)
+			obs_data_set_bool(d, "use_buffer", curMode == MODE_BUFFER);
+		obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
+		obs_data_release(d);
+	}
+
+	/* Switching mode stops whatever is running first (never switches under
+	 * a live recording), then applies the new mode. Press Start to begin. */
+	void cycleMode()
+	{
+		if (clean_program_active())
+			clean_program_stop();
+		sr_registry_stop_all();
+		curMode = (curMode + 1) % 3;
+		applyModeToCameras();
+		saveModeToConfig();
+		refresh();
+	}
+
+	void toggleRun()
+	{
+		if (curMode == MODE_CLEAN)
+			clean_program_toggle();
+		else if (liveCams > 0)
+			sr_registry_stop_all();
+		else
+			sr_registry_start_all();
+		refresh();
+	}
 
 	void rebuildCards(struct sr_status_row *rows, size_t n)
 	{
@@ -537,6 +853,9 @@ private:
 			delete item;
 		}
 
+		const bool small = layoutMode == LAYOUT_SMALL;
+		const bool large = layoutMode == LAYOUT_LARGE;
+
 		for (int i = 0; i < (int)n; i++) {
 			auto *card = new QFrame();
 			card->setObjectName("card");
@@ -544,26 +863,54 @@ private:
 			cl->setContentsMargins(12, 8, 10, 8);
 			cl->setSpacing(8);
 
-			auto *dot = new QLabel(QString::fromUtf8("\xE2\x97\x8F"));
+			auto *dot = new QLabel(QString::fromUtf8("\xE2\x97\x8F"), card);
 			dot->setStyleSheet("font-size:14px;");
-			auto *nm = new QLabel(QString("%1\n%2x%3 \xC2\xB7 %4")
-						      .arg(rows[i].name)
-						      .arg(rows[i].width)
-						      .arg(rows[i].height)
-						      .arg(rows[i].format));
+			auto *nm = new QLabel(QString::fromUtf8(rows[i].name), card);
 			nm->setStyleSheet("font-weight:600;");
-			auto *stt = new QLabel();
+			if (large)
+				nm->setMinimumWidth(150);
+
+			auto *pct = new QLabel(card);
+			pct->setAlignment(Qt::AlignCenter);
+			pct->setVisible(false); /* shown once the camera is live */
+
+			auto *lagBar = new QProgressBar(card);
+			lagBar->setRange(0, 100);
+			lagBar->setTextVisible(false);
+			lagBar->setFixedHeight(6);
+			lagBar->setMinimumWidth(40);
+			auto *skipped = new QLabel(card);
+			skipped->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			skipped->setMinimumWidth(78);
+			if (!large) {
+				lagBar->setVisible(false);
+				skipped->setVisible(false);
+			}
+
+			auto *tsBox = new QWidget(card);
+			tsBox->setObjectName("tsbox");
+			auto *tsCol = new QVBoxLayout(tsBox);
+			tsCol->setSpacing(1);
+			tsCol->setContentsMargins(0, 0, 0, 0);
+			auto *stt = new QLabel(tsBox);
 			stt->setStyleSheet("font-weight:800;");
 			stt->setAlignment(Qt::AlignRight);
-			auto *tm = new QLabel();
+			auto *tm = new QLabel(tsBox);
 			tm->setStyleSheet("color:#c9d0d6;");
 			tm->setAlignment(Qt::AlignRight);
-			auto *clip = new QPushButton(T("InstantRecord.Dock.Save"));
+			/* Time on top, BUF/REC status right below it. */
+			tsCol->addWidget(tm);
+			tsCol->addWidget(stt);
+			if (small)
+				tsBox->setVisible(false);
+
+			auto *clip = new QPushButton(small ? QString::fromUtf8("\xE2\x98\x85") : T("InstantRecord.Dock.Save"), card);
 			clip->setObjectName("clip");
+			clip->setToolTip(T("InstantRecord.Dock.SaveBuffer"));
 			int idx = i;
 			connect(clip, &QPushButton::clicked, clip, [idx] { sr_registry_save_index((size_t)idx); });
 
-			auto *del = new QPushButton(QString::fromUtf8("\xE2\x9C\x95")); /* ✕ */
+			auto *del = new QPushButton(QString::fromUtf8("\xE2\x9C\x95"), card); /* ✕ */
 			del->setObjectName("del");
 			del->setToolTip(T("InstantRecord.Dock.Remove"));
 			QString srcName = QString::fromUtf8(rows[i].name);
@@ -575,20 +922,21 @@ private:
 
 			cl->addWidget(dot);
 			cl->addWidget(nm);
-			cl->addStretch();
-			/* Time on top, BUF/REC status right below it. */
-			auto *tsCol = new QVBoxLayout();
-			tsCol->setSpacing(1);
-			tsCol->setContentsMargins(0, 0, 0, 0);
-			tsCol->addWidget(tm);
-			tsCol->addWidget(stt);
-			cl->addLayout(tsCol);
-			cl->addSpacing(8);
+			if (large)
+				cl->addWidget(lagBar, 1);
+			else
+				cl->addStretch();
+			cl->addWidget(pct);
+			if (large)
+				cl->addWidget(skipped);
+			cl->addWidget(tsBox);
+			cl->addSpacing(small ? 0 : 8);
 			cl->addWidget(clip);
 			cl->addWidget(del);
 
 			cardsBox->addWidget(card);
-			cards.push_back({card, dot, nm, stt, tm, clip, del, QString::fromUtf8(rows[i].name), i});
+			cards.push_back({card, dot, nm, stt, tm, pct, skipped, lagBar, clip, del,
+							 QString::fromUtf8(rows[i].name), i});
 		}
 		cardsBox->addStretch(); /* keep cards packed at the top */
 		emptyHint->setVisible(n == 0);
@@ -608,7 +956,13 @@ private:
 			lastSig = sig;
 		}
 
+		const int lm = layoutMode;
+		const bool small = lm == LAYOUT_SMALL;
+		const bool large = lm == LAYOUT_LARGE;
 		int rec = 0, buf = 0, idle = 0, err = 0;
+		int alerts = 0, worstIdx = -1, worstLevel = 0;
+		double worstPct = -1.0;
+		uint64_t skippedSum = 0;
 		bool cleanActive = clean_program_active();
 		char cleanCamBuf[256] = {0};
 		clean_program_current_cam(cleanCamBuf, sizeof(cleanCamBuf));
@@ -642,16 +996,66 @@ private:
 				idle++;
 				break;
 			}
+
+			/* Camera health: % of frames this camera's encoder skipped. */
+			Health hl = row_health(rows[i]);
+			if (rows[i].status == SR_STATUS_RECORDING)
+				skippedSum += rows[i].skipped_frames;
+			if (hl.level >= 1) {
+				alerts++;
+				if (hl.level > worstLevel || (hl.level == worstLevel && hl.pct > worstPct)) {
+					worstLevel = hl.level;
+					worstPct = hl.pct;
+					worstIdx = i;
+				}
+			}
+
 			/* Live name + resolution + format: 0x0 becomes the real
 			 * resolution once recording, and Global config changes
 			 * (container/etc.) show immediately. */
-			c.info->setText(QString("%1\n%2x%3 \xC2\xB7 %4")
-						.arg(rows[i].name)
-						.arg(rows[i].width)
-						.arg(rows[i].height)
-						.arg(rows[i].format));
-			/* Blink ONLY the dot while active (no card border). */
-			QString dotCol = (active && !blinkOn) ? "#44444a" : colName;
+			QString infoTxt = QString::fromUtf8(rows[i].name);
+			if (!small) {
+				infoTxt += "\n" + QString("%1x%2").arg(rows[i].width).arg(rows[i].height) +
+						   QString::fromUtf8(" \xC2\xB7 ") + QString::fromUtf8(rows[i].format);
+				if (large) {
+					QString el = enc_label(rows[i].encoder);
+					if (!el.isEmpty())
+						infoTxt += QString::fromUtf8(" \xC2\xB7 ") + el;
+				}
+			}
+			c.info->setText(infoTxt);
+
+			/* Health pill, lag bar and skipped counter. */
+			bool live = rows[i].status == SR_STATUS_RECORDING || rows[i].status == SR_STATUS_ERROR;
+			c.pct->setVisible(live);
+			if (live) {
+				c.pct->setText(rows[i].status == SR_STATUS_ERROR ? T("InstantRecord.Dock.Error")
+																  : QString::asprintf("%.1f%%", hl.pct));
+				c.pct->setStyleSheet(
+					QString("background:%1;color:%2;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700;")
+						.arg(level_bg(hl.level), level_color(hl.level)));
+			}
+			if (large) {
+				int barVal = rows[i].status == SR_STATUS_RECORDING ? (int)(hl.pct * 20.0) + 4 : 0;
+				c.lagBar->setValue(barVal > 100 ? 100 : barVal);
+				c.lagBar->setStyleSheet(
+					QString("QProgressBar{background:#242428;border:none;border-radius:3px;}"
+							"QProgressBar::chunk{background:%1;border-radius:3px;}")
+						.arg(level_color(hl.level)));
+				if (rows[i].status == SR_STATUS_RECORDING) {
+					c.skipped->setText(
+						T("InstantRecord.Health.Skipped").arg(num(rows[i].skipped_frames)) + "\n" +
+						T("InstantRecord.Health.OfTotal").arg(num(rows[i].total_frames)));
+				} else {
+					c.skipped->setText(QStringLiteral("--"));
+				}
+				c.skipped->setStyleSheet("color:#c9d0d6;");
+			}
+
+			/* Blink ONLY the dot while active (no card border). A lagging
+			 * camera shows its health colour instead of the status colour. */
+			QString baseCol = hl.level >= 1 ? level_color(hl.level) : colName;
+			QString dotCol = (active && !blinkOn) ? QString("#44444a") : baseCol;
 			c.dot->setStyleSheet(QString("font-size:14px;color:%1;").arg(dotCol));
 			c.status->setText(st);
 			c.status->setStyleSheet(QString("font-weight:800;color:%1;").arg(colName));
@@ -660,26 +1064,34 @@ private:
 			/* Block removal while this camera is recording/buffering. */
 			c.del->setEnabled(!active);
 			c.del->setToolTip(active ? T("InstantRecord.Dock.RemoveBusy") : T("InstantRecord.Dock.Remove"));
-			/* Highlight the on-air camera. Keep the SAME border width
-			 * as the default card (1px) so the layout never shifts —
-			 * only the colour + a soft tint change. */
+			/* Highlight the on-air camera, or a lagging one. Keep the SAME
+			 * border width as the default card (1px) so the layout never
+			 * shifts — only the colour + a soft tint change. */
 			bool onAir = cleanActive && c.name == cleanCamName;
-			c.w->setStyleSheet(onAir ? "QFrame{background:#13233a;border:1px solid " IR_BLUE
-						   ";border-radius:12px;}"
-						 : "");
+			if (onAir) {
+				c.w->setStyleSheet("QFrame{background:#13233a;border:1px solid " IR_BLUE
+								   ";border-radius:12px;}");
+			} else if (hl.level >= 1) {
+				c.w->setStyleSheet(QString("QFrame#card{border:1px solid %1;}")
+									   .arg(hl.level == 2 ? QString("#7a2a30") : QString("#6b5316")));
+			} else {
+				c.w->setStyleSheet("");
+			}
 		}
+		liveCams = rec + buf;
+
 		/* Start all turns green while any camera is recording, so it's
 		 * obvious the rig is live. */
 		bool anyLive = (rec + buf) > 0;
-		startAll->setStyleSheet(
-			anyLive ? "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4ade80,stop:1 #22a35a);border:none;color:#08210f;font-weight:800;"
-				: "");
+		const QString liveStyle =
+			"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #4ade80,stop:1 #22a35a);border:none;color:#08210f;font-weight:800;";
+		startAll->setStyleSheet(anyLive ? liveStyle : QString());
 		counters->setText(QString("<span style='color:" IR_RED "'>%1 REC</span>  "
-					  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
-					  "<span style='color:" IR_GREEN "'>%3 ready</span>")
-					  .arg(rec)
-					  .arg(buf)
-					  .arg(idle));
+								  "<span style='color:" IR_GOLD "'>%2 BUF</span>  "
+								  "<span style='color:" IR_GREEN "'>%3 ready</span>")
+							  .arg(rec)
+							  .arg(buf)
+							  .arg(idle));
 
 		cleanCard->setVisible(cleanActive);
 		cleanBtn->setText(cleanActive ? T("InstantRecord.Clean.Stop") : T("InstantRecord.Clean.Start"));
@@ -689,19 +1101,90 @@ private:
 				: "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a8fe0,stop:1 #2472c8);border:none;color:#fff;font-weight:800;");
 		if (cleanActive) {
 			long long cs = clean_program_elapsed_s();
-			cleanTime->setText(
-				QString::asprintf("%02lld:%02lld:%02lld", cs / 3600, (cs % 3600) / 60, cs % 60));
+			cleanTime->setText(QString::asprintf("%02lld:%02lld:%02lld", cs / 3600, (cs % 3600) / 60, cs % 60));
 			if (cleanCamName.isEmpty()) {
-				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") +
-						  T("InstantRecord.Clean.NoCam") + QStringLiteral("</span>"));
+				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") + T("InstantRecord.Clean.NoCam") +
+								  QStringLiteral("</span>"));
 			} else {
-				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") +
-						  T("InstantRecord.Clean.Now") +
-						  QStringLiteral("</span> <span style='color:#fff;font-weight:600'>") +
-						  cleanCamName.toHtmlEscaped() + QStringLiteral("</span>"));
+				cleanCam->setText(QStringLiteral("<span style='color:#8a9099'>") + T("InstantRecord.Clean.Now") +
+								  QStringLiteral("</span> <span style='color:#fff;font-weight:600'>") +
+								  cleanCamName.toHtmlEscaped() + QStringLiteral("</span>"));
 			}
 		}
+
+		/* ---- layout-dependent chrome ---- */
+		subtitle->setVisible(!small);
+		counters->setVisible(!small);
+		fullBar->setVisible(large);
+		compactBar->setVisible(!large);
+		statsStrip->setVisible(large);
+
+		/* Header alert pill (small layout only; the banner carries the rest). */
+		alertPill->setVisible(small && alerts > 0);
+		if (small && alerts > 0) {
+			alertPill->setText(alerts == 1 ? T("InstantRecord.Health.AlertCount1")
+										   : T("InstantRecord.Health.AlertCountN").arg(alerts));
+			alertPill->setStyleSheet(
+				QString("background:%1;color:%2;border-radius:8px;padding:2px 8px;font-size:11px;font-weight:700;")
+					.arg(level_bg(worstLevel), level_color(worstLevel)));
+		}
+
+		/* Alert banner: names the worst camera, with a Reset button. */
+		alertBanner->setVisible(alerts > 0);
+		if (alerts > 0 && worstIdx >= 0) {
+			const struct sr_status_row &w = rows[worstIdx];
+			QString cam = QString::fromUtf8(w.name);
+			QString msg;
+			if (w.status == SR_STATUS_ERROR)
+				msg = cam + ": " + T("InstantRecord.Dock.Error");
+			else if (small)
+				msg = T("InstantRecord.Health.AlertShort").arg(cam, QString::number(worstPct, 'f', 1));
+			else if (lm == LAYOUT_MEDIUM)
+				msg = T("InstantRecord.Health.Alert").arg(cam, QString::number(worstPct, 'f', 1));
+			else
+				msg = T("InstantRecord.Health.AlertLong").arg(cam, num(w.skipped_frames), num(w.total_frames));
+			const bool red = worstLevel == 2;
+			alertBanner->setStyleSheet(QString("QFrame#alert{background:%1;border:1px solid %2;border-radius:12px;}")
+										   .arg(red ? QString("#33141a") : QString("#2a2210"),
+												red ? QString("#7a2a30") : QString("#6b5316")));
+			alertText->setStyleSheet(QString("color:%1;").arg(red ? QString("#f5b5b9") : QString("#f7e3b0")));
+			alertIcon->setStyleSheet(QString("font-size:16px;color:%1;").arg(level_color(worstLevel)));
+			alertText->setText(msg);
+			alertReset->setText(small ? QString::fromUtf8("\xE2\x86\xBB") : T("InstantRecord.Health.Reset"));
+		}
+
+		/* Stats strip (large layout). */
+		if (large) {
+			statEnc->setText(T("InstantRecord.Health.Skipped").arg(num(skippedSum)));
+			statEnc->setStyleSheet(QString("font-size:14px;font-weight:700;color:%1;").arg(level_color(worstLevel)));
+			uint32_t lag = obs_get_lagged_frames();
+			uint32_t tot = obs_get_total_frames();
+			uint32_t dl = lag >= renderBaseLag ? lag - renderBaseLag : 0;
+			uint32_t dt = tot >= renderBaseTotal ? tot - renderBaseTotal : 0;
+			double rp = dt ? 100.0 * (double)dl / (double)dt : 0.0;
+			statRender->setText(QString("%1 / %2").arg(num(dl), num(dt)));
+			statRender->setStyleSheet(QString("font-size:14px;font-weight:700;color:%1;")
+										  .arg(level_color(rp >= 2.0 ? 2 : (rp >= 0.5 ? 1 : 0))));
+			statDisk->setText(disk_free_text(outPath));
+		}
+
+		/* Compact bottom bar: mode button + one Start/Stop button. */
+		if (!large) {
+			bool running = (curMode == MODE_CLEAN) ? cleanActive : anyLive;
+			modeBtn->setText(T(mode_text_key(curMode, small)));
+			QString actTip;
+			if (curMode == MODE_CLEAN)
+				actTip = running ? T("InstantRecord.Clean.Stop") : T("InstantRecord.Clean.Start");
+			else
+				actTip = running ? T("InstantRecord.Dock.StopAll") : T("InstantRecord.Dock.StartAll");
+			actBtn->setText(small ? QString::fromUtf8(running ? "\xE2\x96\xA0" : "\xE2\x96\xB6") : actTip);
+			actBtn->setToolTip(actTip);
+			actBtn->setStyleSheet(running ? liveStyle : QString());
+			saveBtn->setVisible(curMode == MODE_BUFFER);
+			saveBtn->setText(small ? QString::fromUtf8("\xE2\x98\x85") : T("InstantRecord.Dock.Save"));
+		}
 	}
+
 
 	void pickAndAddCameras()
 	{
@@ -777,6 +1260,16 @@ private:
 	}
 
 protected:
+	void resizeEvent(QResizeEvent *e) override
+	{
+		QWidget::resizeEvent(e);
+		int lm = layout_for_width(width());
+		if (lm != layoutMode) {
+			layoutMode = lm;
+			lastSig.clear(); /* rebuild the cards for the new layout */
+			refresh();
+		}
+	}
 	void dragEnterEvent(QDragEnterEvent *e) override
 	{
 		if (e->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist") || e->mimeData()->hasText()) {
@@ -1007,6 +1500,11 @@ private:
 			obs_data_set_string(d, "clean_path", cleanPathBytes.constData());
 			obs_data_set_string(d, "clean_container", cleanFmtBytes.constData());
 			obs_data_set_bool(d, "sidecar", sidecar->isChecked());
+			/* The Replay buffer checkbox and the dock mode button are the same setting. */
+			if (curMode != MODE_CLEAN)
+				curMode = buffer->isChecked() ? MODE_BUFFER : MODE_RECORD;
+			obs_data_set_string(d, "mode", mode_key(curMode));
+			outPath = path.isEmpty() ? resolve_out_path() : std::string(path.constData());
 			sr_set_sidecar_enabled(sidecar->isChecked() ? 1 : 0);
 			obs_data_save_json_safe(d, sr_cfg_file().c_str(), "tmp", "bak");
 			obs_data_release(d);
