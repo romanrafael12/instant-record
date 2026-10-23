@@ -631,14 +631,15 @@ public:
 					 ";border-radius:12px;}");
 		{
 			auto *cc = new QVBoxLayout(cleanCard);
-			cc->setContentsMargins(12, 10, 12, 12);
-			cc->setSpacing(8);
+			cc->setContentsMargins(10, 6, 10, 7);
+			cc->setSpacing(2);
 			auto *top = new QHBoxLayout();
 			top->setSpacing(8);
 			auto *recBadge = new QLabel(QString::fromUtf8("\xE2\x97\x8F REC"), cleanCard);
 			recBadge->setStyleSheet("background:" IR_RED ";color:#fff;font-weight:800;"
 						"font-size:10px;border-radius:8px;padding:2px 8px;");
-			auto *ttl = new QLabel(T("InstantRecord.Clean.Title"), cleanCard);
+			cleanTtl = new QLabel(T("InstantRecord.Clean.Title"), cleanCard);
+			auto *ttl = cleanTtl;
 			ttl->setStyleSheet("color:" IR_TEXT ";font-weight:700;font-size:12px;");
 			cleanTime = new QLabel(QStringLiteral("00:00:00"), cleanCard);
 			cleanTime->setStyleSheet("color:" IR_BLUE ";font-weight:800;"
@@ -651,12 +652,6 @@ public:
 			cleanCam = new QLabel(cleanCard);
 			cleanCam->setStyleSheet("font-size:11px;");
 			cc->addWidget(cleanCam);
-			auto *stopClean = new QPushButton(T("InstantRecord.Clean.Stop"), cleanCard);
-			stopClean->setStyleSheet("QPushButton{background:#1a1a1e;color:" IR_RED
-						 ";border:1px solid #3a2326;border-radius:10px;padding:6px 0;font-weight:700;}"
-						 "QPushButton:hover{background:#241a1c;}");
-			connect(stopClean, &QPushButton::clicked, this, [] { clean_program_stop(); });
-			cc->addWidget(stopClean);
 		}
 		cleanCard->setVisible(false);
 		root->addWidget(cleanCard);
@@ -770,6 +765,7 @@ private:
 	QFrame *cleanCard;
 	QLabel *cleanTime;
 	QLabel *cleanCam;
+	QLabel *cleanTtl = nullptr;
 	QPushButton *cleanBtn;
 	std::vector<Card> cards;
 	QString lastSig;
@@ -1158,6 +1154,9 @@ private:
 								  QStringLiteral("</span> <span style='color:#fff;font-weight:600'>") +
 								  cleanCamName.toHtmlEscaped() + QStringLiteral("</span>"));
 			}
+			/* Small layout: one row — the camera name replaces the title. */
+			cleanCam->setVisible(!small);
+			cleanTtl->setText(small && !cleanCamName.isEmpty() ? cleanCamName : T("InstantRecord.Clean.Title"));
 		}
 
 		/* ---- layout-dependent chrome ---- */
