@@ -587,7 +587,7 @@ public:
 			auto *sl = new QHBoxLayout(statsStrip);
 			sl->setContentsMargins(0, 0, 0, 0);
 			sl->setSpacing(8);
-			auto makeStat = [&](const char *titleKey, QLabel **valueOut) {
+			auto makeStat = [&](int idx, const char *titleKey, QLabel **valueOut) {
 				auto *f = new QFrame(statsStrip);
 				f->setObjectName("stat");
 				auto *v = new QVBoxLayout(f);
@@ -600,15 +600,24 @@ public:
 				v->addWidget(tl);
 				v->addWidget(val);
 				sl->addWidget(f, 1);
+				statFrame[idx] = f;
+				statTitle[idx] = tl;
 				*valueOut = val;
 			};
-			makeStat("InstantRecord.Health.EncoderLag", &statEnc);
-			makeStat("InstantRecord.Health.RenderLag", &statRender);
-			makeStat("InstantRecord.Health.DiskFree", &statDisk);
-			auto *rst = new QPushButton(T("InstantRecord.Health.Reset"), statsStrip);
-			rst->setToolTip(T("InstantRecord.Health.ResetTip"));
-			sl->addWidget(rst);
-			connect(rst, &QPushButton::clicked, this, [this] { resetLag(); });
+			makeStat(0, "InstantRecord.Health.EncoderLag", &statEnc);
+			makeStat(1, "InstantRecord.Health.RenderLag", &statRender);
+			makeStat(2, "InstantRecord.Health.DiskFree", &statDisk);
+			/* Small layout: the three numbers collapse into one line. */
+			statLine = new QLabel(statsStrip);
+			statLine->setTextFormat(Qt::RichText);
+			statLine->setStyleSheet("background:" IR_CARD ";border:1px solid #242428;border-radius:10px;"
+						"padding:5px 9px;font-size:11px;");
+			statLine->setVisible(false);
+			sl->addWidget(statLine, 1);
+			statReset = new QPushButton(T("InstantRecord.Health.Reset"), statsStrip);
+			statReset->setToolTip(T("InstantRecord.Health.ResetTip"));
+			sl->addWidget(statReset);
+			connect(statReset, &QPushButton::clicked, this, [this] { resetLag(); });
 		}
 		statsStrip->setVisible(false);
 		root->addWidget(statsStrip);
@@ -775,6 +784,10 @@ private:
 	QLabel *statEnc = nullptr;
 	QLabel *statRender = nullptr;
 	QLabel *statDisk = nullptr;
+	QFrame *statFrame[3] = {nullptr, nullptr, nullptr};
+	QLabel *statTitle[3] = {nullptr, nullptr, nullptr};
+	QLabel *statLine = nullptr;
+	QPushButton *statReset = nullptr;
 	QWidget *fullBar = nullptr;
 	QWidget *compactBar = nullptr;
 	QPushButton *modeBtn = nullptr;
@@ -1152,7 +1165,7 @@ private:
 		counters->setVisible(!small);
 		fullBar->setVisible(false); /* legacy buttons, replaced by the mode bar */
 		compactBar->setVisible(true);
-		statsStrip->setVisible(large);
+		statsStrip->setVisible(true);
 
 		/* Header alert pill (small layout only; the banner carries the rest). */
 		alertPill->setVisible(small && alerts > 0);
@@ -1188,29 +1201,55 @@ private:
 			alertReset->setText(small ? QString::fromUtf8("\xE2\x86\xBB") : T("InstantRecord.Health.Reset"));
 		}
 
-		/* Stats strip (large layout). */
-		if (large) {
-			/* Big percentage on top, small grey detail underneath. */
-			auto statHtml = [](const QString &big, const QString &color, const QString &detail) {
-				return QString("<span style='font-size:18px;font-weight:700;color:%1'>%2</span><br>"
-					       "<span style='font-size:11px;color:" IR_MUTED "'>%3</span>")
-					.arg(color, big, detail.toHtmlEscaped());
-			};
+		/* Stats strip: same numbers at every size, different shape. */
+		{
 			double ep = totalSum ? 100.0 * (double)skippedSum / (double)totalSum : 0.0;
 			int el = totalSum < 120 ? 0 : (ep >= 2.0 ? 2 : (ep >= 0.5 ? 1 : 0));
-			statEnc->setText(statHtml(QString::asprintf("%.1f%%", ep), level_color(el),
-						  T("InstantRecord.Health.Skipped").arg(num(skippedSum)) + " " +
-							  T("InstantRecord.Health.OfTotal").arg(num(totalSum))));
 			uint32_t lag = obs_get_lagged_frames();
 			uint32_t tot = obs_get_total_frames();
 			uint32_t dl = lag >= renderBaseLag ? lag - renderBaseLag : 0;
 			uint32_t dt = tot >= renderBaseTotal ? tot - renderBaseTotal : 0;
 			double rp = dt ? 100.0 * (double)dl / (double)dt : 0.0;
-			statRender->setText(statHtml(QString::asprintf("%.1f%%", rp),
-						     level_color(rp >= 2.0 ? 2 : (rp >= 0.5 ? 1 : 0)),
-						     T("InstantRecord.Health.Skipped").arg(num(dl)) + " " +
-							     T("InstantRecord.Health.OfTotal").arg(num(dt))));
-			statDisk->setText(statHtml(disk_free_text(outPath), QString(IR_TEXT), QString::fromUtf8("\xC2\xA0")));
+			int rl = rp >= 2.0 ? 2 : (rp >= 0.5 ? 1 : 0);
+			QString encPct = QString::asprintf("%.1f%%", ep);
+			QString renPct = QString::asprintf("%.1f%%", rp);
+			QString diskTxt = disk_free_text(outPath);
+
+			const bool cardsOn = !small;
+			for (int k = 0; k < 3; k++)
+				statFrame[k]->setVisible(cardsOn);
+			statLine->setVisible(small);
+			statReset->setText(large ? T("InstantRecord.Health.Reset") : QString::fromUtf8("\xE2\x86\xBB"));
+
+			/* Big number on top; small grey detail underneath (large only). */
+			auto statHtml = [](const QString &big, const QString &color, const QString &detail) {
+				QString h = QString("<span style='font-size:18px;font-weight:700;color:%1'>%2</span>").arg(color, big);
+				if (!detail.isEmpty())
+					h += QString("<br><span style='font-size:11px;color:" IR_MUTED "'>%1</span>")
+						     .arg(detail.toHtmlEscaped());
+				return h;
+			};
+			if (cardsOn) {
+				statTitle[0]->setText(T(large ? "InstantRecord.Health.EncoderLag" : "InstantRecord.Health.EncoderShort"));
+				statTitle[1]->setText(T(large ? "InstantRecord.Health.RenderLag" : "InstantRecord.Health.RenderShort"));
+				statTitle[2]->setText(T(large ? "InstantRecord.Health.DiskFree" : "InstantRecord.Health.DiskShort"));
+				QString encDetail, renDetail, diskDetail;
+				if (large) {
+					encDetail = T("InstantRecord.Health.Skipped").arg(num(skippedSum)) + " " +
+						    T("InstantRecord.Health.OfTotal").arg(num(totalSum));
+					renDetail = T("InstantRecord.Health.Skipped").arg(num(dl)) + " " +
+						    T("InstantRecord.Health.OfTotal").arg(num(dt));
+					diskDetail = QString::fromUtf8("\xC2\xA0");
+				}
+				statEnc->setText(statHtml(encPct, level_color(el), encDetail));
+				statRender->setText(statHtml(renPct, level_color(rl), renDetail));
+				statDisk->setText(statHtml(diskTxt, QString(IR_TEXT), diskDetail));
+			} else {
+				statLine->setText(QString("%1 <b style='color:%2'>%3</b> \xC2\xB7 %4 <b style='color:%5'>%6</b> \xC2\xB7 %7")
+							  .arg(T("InstantRecord.Health.EncAbbr"), level_color(el), encPct,
+							       T("InstantRecord.Health.RenderShort"), level_color(rl), renPct)
+							  .arg(diskTxt));
+			}
 		}
 
 		/* Compact bottom bar: mode picker + one Start/Stop button. */
