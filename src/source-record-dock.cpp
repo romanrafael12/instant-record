@@ -64,6 +64,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QProgressBar>
 #include <QResizeEvent>
 #include <QLocale>
+#include <QMenu>
+#include <QAction>
 
 /* Instant Replay brand palette (from the app UI). */
 #define IR_BG "#0b0b0d"
@@ -511,6 +513,10 @@ public:
 			"QPushButton#link{background:transparent;border:none;color:" IR_BLUE ";font-weight:700;padding:2px 6px;}"
 			"QPushButton#mode{background:#1d1733;border:1px solid #4a3a92;color:#c9bcff;border-radius:12px;padding:5px 11px;font-weight:700;}"
 			"QPushButton#mode:hover{border-color:" IR_PURPLE ";}"
+			"QPushButton#mode:disabled{background:#141416;border:1px solid #2e2e34;color:#7c848c;}"
+			"QMenu{background:#141416;border:1px solid #4a3a92;border-radius:10px;padding:4px;}"
+			"QMenu::item{padding:6px 16px;border-radius:8px;}"
+			"QMenu::item:selected{background:#1d1733;color:#c9bcff;}"
 			"QFrame#stat{background:" IR_CARD ";border:1px solid #242428;border-radius:10px;}"
 			"QWidget#tsbox{background:transparent;}");
 
@@ -708,7 +714,7 @@ public:
 			cb->addWidget(saveBtn);
 			cb->addStretch();
 			cb->addWidget(cfgBtn);
-			connect(modeBtn, &QPushButton::clicked, this, [this] { cycleMode(); });
+			connect(modeBtn, &QPushButton::clicked, this, [this] { showModeMenu(); });
 			connect(actBtn, &QPushButton::clicked, this, [this] { toggleRun(); });
 			connect(saveBtn, &QPushButton::clicked, this, [] { sr_registry_save_all(); });
 			connect(cfgBtn, &QPushButton::clicked, this, [this] { openGlobalConfig(); });
@@ -817,14 +823,30 @@ private:
 		obs_data_release(d);
 	}
 
-	/* Switching mode stops whatever is running first (never switches under
-	 * a live recording), then applies the new mode. Press Start to begin. */
-	void cycleMode()
+	/* Mode picker: a small menu under the mode button (no cycling). The
+	 * button is disabled while anything is running, so the mode is never
+	 * changed under a live recording. */
+	void showModeMenu()
 	{
+		QMenu menu(this);
+		const char *keys[3] = {"InstantRecord.Dock.Mode.Buffer", "InstantRecord.Dock.Mode.Record",
+				       "InstantRecord.Dock.Mode.Clean"};
+		for (int m = 0; m < 3; m++) {
+			QString label = (m == curMode ? QString::fromUtf8("\xE2\x9C\x93  ") : QStringLiteral("     ")) + T(keys[m]);
+			QAction *act = menu.addAction(label);
+			connect(act, &QAction::triggered, this, [this, m] { setMode(m); });
+		}
+		menu.exec(modeBtn->mapToGlobal(QPoint(0, modeBtn->height())));
+	}
+
+	void setMode(int m)
+	{
+		if (m == curMode)
+			return;
 		if (clean_program_active())
 			clean_program_stop();
 		sr_registry_stop_all();
-		curMode = (curMode + 1) % 3;
+		curMode = m;
 		applyModeToCameras();
 		saveModeToConfig();
 		refresh();
@@ -1168,23 +1190,31 @@ private:
 			statDisk->setText(disk_free_text(outPath));
 		}
 
-		/* Compact bottom bar: mode button + one Start/Stop button. */
+		/* Compact bottom bar: mode picker + one Start/Stop button. */
 		if (!large) {
 			bool running = (curMode == MODE_CLEAN) ? cleanActive : anyLive;
-			modeBtn->setText(T(mode_text_key(curMode, small)));
+			bool busy = anyLive || cleanActive;
+			const QString arrow = QString::fromUtf8(" \xE2\x96\xBE");
+			QString modeTxt = T(mode_text_key(curMode, small));
+			if (!small)
+				modeTxt = T("InstantRecord.Dock.ModeLabel").arg(T(mode_text_key(curMode, false)));
+			modeBtn->setText(modeTxt + arrow);
+			modeBtn->setEnabled(!busy);
 			QString actTip;
 			if (curMode == MODE_CLEAN)
 				actTip = running ? T("InstantRecord.Clean.Stop") : T("InstantRecord.Clean.Start");
 			else
 				actTip = running ? T("InstantRecord.Dock.StopAll") : T("InstantRecord.Dock.StartAll");
-			actBtn->setText(small ? QString::fromUtf8(running ? "\xE2\x96\xA0" : "\xE2\x96\xB6") : actTip);
+			QString actTxt = QString::fromUtf8(running ? "\xE2\x96\xA0" : "\xE2\x96\xB6");
+			if (!small)
+				actTxt += QStringLiteral(" ") + T(running ? "InstantRecord.Dock.Stop" : "InstantRecord.Dock.Start");
+			actBtn->setText(actTxt);
 			actBtn->setToolTip(actTip);
 			actBtn->setStyleSheet(running ? liveStyle : QString());
 			saveBtn->setVisible(curMode == MODE_BUFFER);
 			saveBtn->setText(small ? QString::fromUtf8("\xE2\x98\x85") : T("InstantRecord.Dock.Save"));
 		}
 	}
-
 
 	void pickAndAddCameras()
 	{
