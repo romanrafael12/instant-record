@@ -112,6 +112,10 @@ struct source_record_filter {
 	char *used_encoder;         /* encoder actually used (after fallback)*/
 	uint32_t out_w, out_h;      /* scaled output dimensions             */
 	int used_fps_div;
+
+	/* Lag baseline (so the dock's Reset can zero the skipped-frame counters). */
+	uint32_t lag_base_skipped;
+	uint32_t lag_base_total;
 };
 
 extern struct obs_source_info source_record_filter_info;
@@ -136,10 +140,16 @@ struct sr_status_row {
 	int last_error_code;
 	bool use_buffer;    /* true if this camera is in replay-buffer mode */
 	bool also_buffer;   /* recording a file AND keeping a buffer */
+	uint64_t skipped_frames; /* frames this camera's encoder skipped since last reset */
+	uint64_t total_frames;   /* frames processed since last reset */
+	char encoder[48];        /* encoder id in use (empty when idle) */
 };
 
 /* Copies up to max_rows snapshots into `rows`; returns the count. */
 size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows);
+
+/* Zero every camera's skipped-frame counters (measure again from now). */
+void sr_registry_reset_lag(void);
 
 /* Save a clip from a single camera by its snapshot index. */
 void sr_registry_save_index(size_t index);
