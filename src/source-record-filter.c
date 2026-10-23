@@ -670,6 +670,10 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 
 	obs_data_t *venc = obs_data_create();
 	obs_data_set_int(venc, "bitrate", f->bitrate);
+	/* Keyframe every 1 s. The replay buffer can only start a clip on a
+	 * keyframe, so with the encoder default (250 frames) the saved clip
+	 * length drifted by up to ~4 s at 60 fps and ~17 s at 15 fps. */
+	obs_data_set_int(venc, "keyint_sec", 1);
 	f->video_encoder = obs_video_encoder_create(enc_id && *enc_id ? enc_id : "obs_x264", "instant_record_venc",
 						    venc, NULL);
 	obs_data_release(venc);
