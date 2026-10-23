@@ -658,8 +658,10 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 	ovi.base_height = h;
 	ovi.output_width = sw;
 	ovi.output_height = sh;
-	if (fps_div > 1)
-		ovi.fps_den *= fps_div; /* halve/quarter the ISO frame rate */
+	/* NOTE: do NOT change ovi.fps_den here. The view is still fed at the
+	 * main OBS rate, so declaring a lower rate made every frame play
+	 * 2x/4x too slowly (slow motion). The ISO frame rate is reduced by
+	 * the encoder instead (see obs_encoder_set_frame_rate_divisor below). */
 
 	f->video_output = obs_view_add2(f->view, &ovi);
 	if (!f->video_output) {
@@ -678,6 +680,8 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 						    venc, NULL);
 	obs_data_release(venc);
 	obs_encoder_set_video(f->video_encoder, f->video_output);
+	if (fps_div > 1)
+		obs_encoder_set_frame_rate_divisor(f->video_encoder, fps_div); /* half/quarter fps, correct timestamps */
 
 	f->audio_encoder = obs_audio_encoder_create("ffmpeg_aac", "instant_record_aenc", NULL, 0, NULL);
 	if (f->isolate_audio && open_isolated_audio(f, parent))
