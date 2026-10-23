@@ -596,7 +596,7 @@ public:
 				auto *tl = new QLabel(T(titleKey), f);
 				tl->setStyleSheet("color:" IR_MUTED ";font-size:11px;");
 				auto *val = new QLabel(QStringLiteral("--"), f);
-				val->setStyleSheet("font-size:14px;font-weight:700;");
+				val->setTextFormat(Qt::RichText);
 				v->addWidget(tl);
 				v->addWidget(val);
 				sl->addWidget(f, 1);
@@ -995,6 +995,7 @@ private:
 		int alerts = 0, worstIdx = -1, worstLevel = 0;
 		double worstPct = -1.0;
 		uint64_t skippedSum = 0;
+		uint64_t totalSum = 0;
 		bool cleanActive = clean_program_active();
 		char cleanCamBuf[256] = {0};
 		clean_program_current_cam(cleanCamBuf, sizeof(cleanCamBuf));
@@ -1033,6 +1034,8 @@ private:
 			Health hl = row_health(rows[i]);
 			if (rows[i].status == SR_STATUS_RECORDING)
 				skippedSum += rows[i].skipped_frames;
+			if (rows[i].status == SR_STATUS_RECORDING)
+				totalSum += rows[i].total_frames;
 			if (hl.level >= 1) {
 				alerts++;
 				if (hl.level > worstLevel || (hl.level == worstLevel && hl.pct > worstPct)) {
@@ -1187,17 +1190,27 @@ private:
 
 		/* Stats strip (large layout). */
 		if (large) {
-			statEnc->setText(T("InstantRecord.Health.Skipped").arg(num(skippedSum)));
-			statEnc->setStyleSheet(QString("font-size:14px;font-weight:700;color:%1;").arg(level_color(worstLevel)));
+			/* Big percentage on top, small grey detail underneath. */
+			auto statHtml = [](const QString &big, const QString &color, const QString &detail) {
+				return QString("<span style='font-size:18px;font-weight:700;color:%1'>%2</span><br>"
+					       "<span style='font-size:11px;color:" IR_MUTED "'>%3</span>")
+					.arg(color, big, detail.toHtmlEscaped());
+			};
+			double ep = totalSum ? 100.0 * (double)skippedSum / (double)totalSum : 0.0;
+			int el = totalSum < 120 ? 0 : (ep >= 2.0 ? 2 : (ep >= 0.5 ? 1 : 0));
+			statEnc->setText(statHtml(QString::asprintf("%.1f%%", ep), level_color(el),
+						  T("InstantRecord.Health.Skipped").arg(num(skippedSum)) + " " +
+							  T("InstantRecord.Health.OfTotal").arg(num(totalSum))));
 			uint32_t lag = obs_get_lagged_frames();
 			uint32_t tot = obs_get_total_frames();
 			uint32_t dl = lag >= renderBaseLag ? lag - renderBaseLag : 0;
 			uint32_t dt = tot >= renderBaseTotal ? tot - renderBaseTotal : 0;
 			double rp = dt ? 100.0 * (double)dl / (double)dt : 0.0;
-			statRender->setText(QString("%1 / %2").arg(num(dl), num(dt)));
-			statRender->setStyleSheet(QString("font-size:14px;font-weight:700;color:%1;")
-										  .arg(level_color(rp >= 2.0 ? 2 : (rp >= 0.5 ? 1 : 0))));
-			statDisk->setText(disk_free_text(outPath));
+			statRender->setText(statHtml(QString::asprintf("%.1f%%", rp),
+						     level_color(rp >= 2.0 ? 2 : (rp >= 0.5 ? 1 : 0)),
+						     T("InstantRecord.Health.Skipped").arg(num(dl)) + " " +
+							     T("InstantRecord.Health.OfTotal").arg(num(dt))));
+			statDisk->setText(statHtml(disk_free_text(outPath), QString(IR_TEXT), QString::fromUtf8("\xC2\xA0")));
 		}
 
 		/* Compact bottom bar: mode picker + one Start/Stop button. */
