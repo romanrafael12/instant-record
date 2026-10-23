@@ -840,7 +840,12 @@ private:
 			QAction *act = menu.addAction(label);
 			connect(act, &QAction::triggered, this, [this, m] { setMode(m); });
 		}
-		menu.exec(modeBtn->mapToGlobal(QPoint(0, modeBtn->height())));
+		/* The mode button sits at the bottom of the dock, so open the menu
+		 * upward (above the button) instead of below it. */
+		menu.ensurePolished();
+		QPoint pos = modeBtn->mapToGlobal(QPoint(0, 0));
+		pos.setY(pos.y() - menu.sizeHint().height() - 4);
+		menu.exec(pos);
 	}
 
 	void setMode(int m)
