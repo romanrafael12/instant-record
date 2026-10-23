@@ -263,11 +263,39 @@ size_t sr_registry_snapshot(struct sr_status_row *rows, size_t max_rows)
 		rows[n].last_error_code = f->last_error_code;
 		rows[n].use_buffer = f->use_buffer;
 		rows[n].also_buffer = f->also_buffer;
+		{
+			uint64_t sk = 0, tot = 0;
+			if (f->active && f->video_output) {
+				uint64_t s0 = video_output_get_skipped_frames(f->video_output);
+				uint64_t t0 = video_output_get_total_frames(f->video_output);
+				sk = s0 > f->lag_base_skipped ? s0 - f->lag_base_skipped : 0;
+				tot = t0 > f->lag_base_total ? t0 - f->lag_base_total : 0;
+			}
+			rows[n].skipped_frames = sk;
+			rows[n].total_frames = tot;
+			snprintf(rows[n].encoder, sizeof(rows[n].encoder), "%s",
+				 (f->active && f->used_encoder) ? f->used_encoder : "");
+		}
 		pthread_mutex_unlock(&f->mutex);
 		n++;
 	}
 	pthread_mutex_unlock(&sr_registry_lock);
 	return n;
+}
+
+void sr_registry_reset_lag(void)
+{
+	pthread_mutex_lock(&sr_registry_lock);
+	for (size_t i = 0; i < sr_registry.num; i++) {
+		struct source_record_filter *f = sr_registry.array[i];
+		pthread_mutex_lock(&f->mutex);
+		if (f->video_output) {
+			f->lag_base_skipped = video_output_get_skipped_frames(f->video_output);
+			f->lag_base_total = video_output_get_total_frames(f->video_output);
+		}
+		pthread_mutex_unlock(&f->mutex);
+	}
+	pthread_mutex_unlock(&sr_registry_lock);
 }
 
 void sr_registry_apply_config(const struct sr_global_config *cfg)
@@ -739,6 +767,8 @@ static bool sr_try_start(struct source_record_filter *f, obs_source_t *parent, c
 	}
 
 	f->active = true;
+	f->lag_base_skipped = 0; /* fresh view = fresh counters */
+	f->lag_base_total = 0;
 	f->status = SR_STATUS_RECORDING;
 	f->width = w;
 	f->height = h;
