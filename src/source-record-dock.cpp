@@ -1113,7 +1113,7 @@ private:
 			 * shifts — only the colour + a soft tint change. */
 			bool onAir = cleanActive && c.name == cleanCamName;
 			if (onAir) {
-				c.w->setStyleSheet("QFrame{background:#13233a;border:1px solid " IR_BLUE
+				c.w->setStyleSheet("QFrame#card{background:#13233a;border:1px solid " IR_BLUE
 								   ";border-radius:12px;}");
 			} else if (hl.level >= 1) {
 				c.w->setStyleSheet(QString("QFrame#card{border:1px solid %1;}")
